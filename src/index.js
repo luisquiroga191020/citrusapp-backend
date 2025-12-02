@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
 const auth = require('./middleware/auth');
+const zonasRoutes = require('./routes/zonas');
 
 const app = express();
 app.use(express.json());
@@ -57,10 +58,9 @@ app.post('/auth/login', async (req, res) => {
 
 // --- RUTAS DE DATOS (Protegidas) ---
 
-// Obtener Dashboard (KPIs optimizados)
+
 app.get('/api/dashboard', auth, async (req, res) => {
     try {
-        // Consulta compleja optimizada en SQL
         const kpis = await pool.query(`
             SELECT 
                 COUNT(*) as total_ventas,
@@ -76,4 +76,5 @@ app.get('/api/dashboard', auth, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+app.use('/api/zonas', zonasRoutes);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
