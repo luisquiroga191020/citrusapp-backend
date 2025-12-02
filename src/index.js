@@ -8,6 +8,7 @@ const auth = require('./middleware/auth');
 const zonasRoutes = require('./routes/zonas');
 const planesRoutes = require('./routes/planes');
 const promotoresRoutes = require('./routes/promotores');
+const jornadasRoutes = require('./routes/jornadas');
 
 const app = express();
 app.use(express.json());
@@ -81,4 +82,5 @@ const PORT = process.env.PORT || 3000;
 app.use('/api/zonas', zonasRoutes);
 app.use('/api/planes', planesRoutes);
 app.use('/api/promotores', promotoresRoutes);
+app.use('/api/jornadas', jornadasRoutes);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
