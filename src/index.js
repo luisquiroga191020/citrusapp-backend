@@ -9,6 +9,7 @@ const zonasRoutes = require('./routes/zonas');
 const planesRoutes = require('./routes/planes');
 const promotoresRoutes = require('./routes/promotores');
 const jornadasRoutes = require('./routes/jornadas');
+const usuariosRoutes = require('./routes/usuarios');
 
 const app = express();
 app.use(express.json());
@@ -83,4 +84,5 @@ app.use('/api/zonas', zonasRoutes);
 app.use('/api/planes', planesRoutes);
 app.use('/api/promotores', promotoresRoutes);
 app.use('/api/jornadas', jornadasRoutes);
+app.use('/api/usuarios', usuariosRoutes);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
