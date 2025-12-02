@@ -6,6 +6,8 @@ const jwt = require('jsonwebtoken');
 const pool = require('./db');
 const auth = require('./middleware/auth');
 const zonasRoutes = require('./routes/zonas');
+const planesRoutes = require('./routes/planes');
+const promotoresRoutes = require('./routes/promotores');
 
 const app = express();
 app.use(express.json());
@@ -77,4 +79,6 @@ app.get('/api/dashboard', auth, async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.use('/api/zonas', zonasRoutes);
+app.use('/api/planes', planesRoutes);
+app.use('/api/promotores', promotoresRoutes);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
