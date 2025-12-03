@@ -11,8 +11,9 @@ if (!process.env.GEMINI_API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-// Usamos el modelo Flash, ideal para respuestas rápidas
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+// --- CAMBIO: Usamos el modelo que aparece en tu lista ---
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // El mapa de tu base de datos para que la IA entienda qué buscar
 const DB_SCHEMA = `
@@ -116,6 +117,19 @@ router.post("/chat", auth, async (req, res) => {
         error:
           "Tuve un problema técnico al procesar tu consulta. Por favor intenta de nuevo.",
       });
+  }
+});
+
+// Mantenemos la ruta de debug por si acaso
+router.get("/debug-models", async (req, res) => {
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`
+    );
+    const data = await response.json();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
