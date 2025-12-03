@@ -1,65 +1,62 @@
-const router = require('express').Router();
-const pool = require('../db');
-const bcrypt = require('bcryptjs'); // Necesario para la contraseña
-const auth = require('../middleware/auth');
+const router = require("express").Router();
+const pool = require("../db");
+const bcrypt = require("bcryptjs");
+const auth = require("../middleware/auth");
 
-// 1. Listar Usuarios
-router.get('/', auth, async (req, res) => {
-    try {
-        // No devolvemos el password_hash por seguridad
-        const result = await pool.query('SELECT id, email, nombre_completo, rol, activo, created_at FROM usuarios ORDER BY created_at DESC');
-        res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+router.get("/", auth, async (req, res) => {
+  try {
+    // Traemos también el nombre de la zona para mostrarlo en la tabla
+    const query = `
+            SELECT u.id, u.email, u.nombre_completo, u.rol, u.activo, u.zona_id, z.nombre as nombre_zona
+            FROM usuarios u
+            LEFT JOIN zonas z ON u.zona_id = z.id
+            ORDER BY u.nombre_completo ASC
+        `;
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 2. Crear Usuario (Desde el panel de admin)
-router.post('/', auth, async (req, res) => {
-    const { email, password, nombre_completo, rol } = req.body;
-    
-    try {
-        // Encriptar password
-        const hash = await bcrypt.hash(password, 10);
-        
-        const result = await pool.query(
-            "INSERT INTO usuarios (email, password_hash, nombre_completo, rol) VALUES ($1, $2, $3, $4) RETURNING id, email, nombre_completo, rol",
-            [email, hash, nombre_completo, rol]
-        );
-        res.json(result.rows[0]);
-    } catch (err) {
-        // Error típico: Email duplicado (código 23505 en Postgres)
-        if (err.code === '23505') {
-            return res.status(400).json({ error: "El email ya está registrado" });
-        }
-        res.status(500).json({ error: err.message });
-    }
+router.post("/", auth, async (req, res) => {
+  const { email, password, nombre_completo, rol, zona_id } = req.body;
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    // Insertamos zona_id (puede ser null si es admin)
+    const result = await pool.query(
+      "INSERT INTO usuarios (email, password_hash, nombre_completo, rol, zona_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, email",
+      [email, hash, nombre_completo, rol, zona_id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === "23505")
+      return res.status(400).json({ error: "Email ya registrado" });
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 3. Editar Usuario (Sin cambiar password)
-router.put('/:id', auth, async (req, res) => {
-    const { id } = req.params;
-    const { email, nombre_completo, rol, activo } = req.body;
-    
-    try {
-        await pool.query(
-            'UPDATE usuarios SET email = $1, nombre_completo = $2, rol = $3, activo = $4 WHERE id = $5',
-            [email, nombre_completo, rol, activo, id]
-        );
-        res.json({ message: "Usuario actualizado" });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+router.put("/:id", auth, async (req, res) => {
+  const { id } = req.params;
+  const { email, nombre_completo, rol, activo, zona_id } = req.body;
+  try {
+    await pool.query(
+      "UPDATE usuarios SET email = $1, nombre_completo = $2, rol = $3, activo = $4, zona_id = $5 WHERE id = $6",
+      [email, nombre_completo, rol, activo, zona_id, id]
+    );
+    res.json({ message: "Usuario actualizado" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 4. Eliminar Usuario
-router.delete('/:id', auth, async (req, res) => {
-    try {
-        await pool.query('DELETE FROM usuarios WHERE id = $1', [req.params.id]);
-        res.json({ message: "Usuario eliminado" });
-    } catch (err) {
-        res.status(500).json({ error: "No se puede eliminar (tiene datos asociados)" });
-    }
+router.delete("/:id", auth, async (req, res) => {
+  try {
+    await pool.query("DELETE FROM usuarios WHERE id = $1", [req.params.id]);
+    res.json({ message: "Eliminado" });
+  } catch (err) {
+    res.status(500).json({ error: "No se puede eliminar." });
+  }
 });
 
 module.exports = router;

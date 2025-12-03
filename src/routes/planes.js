@@ -2,7 +2,6 @@ const router = require('express').Router();
 const pool = require('../db');
 const auth = require('../middleware/auth');
 
-// Listar Planes
 router.get('/', auth, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM planes ORDER BY nombre ASC');
@@ -12,13 +11,13 @@ router.get('/', auth, async (req, res) => {
     }
 });
 
-// Crear Plan
 router.post('/', auth, async (req, res) => {
-    const { nombre, comision_base } = req.body;
+    // Ahora recibimos servicio y tipo
+    const { nombre, servicio, tipo } = req.body; 
     try {
         const result = await pool.query(
-            'INSERT INTO planes (nombre, comision_base) VALUES ($1, $2) RETURNING *',
-            [nombre, comision_base]
+            'INSERT INTO planes (nombre, servicio, tipo) VALUES ($1, $2, $3) RETURNING *',
+            [nombre, servicio, tipo]
         );
         res.json(result.rows[0]);
     } catch (err) {
@@ -26,14 +25,13 @@ router.post('/', auth, async (req, res) => {
     }
 });
 
-// Editar Plan
 router.put('/:id', auth, async (req, res) => {
     const { id } = req.params;
-    const { nombre, comision_base } = req.body;
+    const { nombre, servicio, tipo } = req.body;
     try {
         await pool.query(
-            'UPDATE planes SET nombre = $1, comision_base = $2 WHERE id = $3',
-            [nombre, comision_base, id]
+            'UPDATE planes SET nombre = $1, servicio = $2, tipo = $3 WHERE id = $4',
+            [nombre, servicio, tipo, id]
         );
         res.json({ message: "Plan actualizado" });
     } catch (err) {
@@ -41,7 +39,6 @@ router.put('/:id', auth, async (req, res) => {
     }
 });
 
-// Borrar Plan
 router.delete('/:id', auth, async (req, res) => {
     try {
         await pool.query('DELETE FROM planes WHERE id = $1', [req.params.id]);
