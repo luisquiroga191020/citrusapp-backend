@@ -3,13 +3,18 @@ const pool = require("../db");
 const auth = require("../middleware/auth");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// Configurar Gemini
+// Verificar que la clave exista
+if (!process.env.GEMINI_API_KEY) {
+  console.error(
+    "ERROR FATAL: No se encontró GEMINI_API_KEY en las variables de entorno."
+  );
+}
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// Le enseñamos a la IA tu base de datos
 const DB_SCHEMA = `
-Eres un experto SQL. Tienes esta base de datos PostgreSQL:
+Tablas PostgreSQL:
 - zonas (id, nombre)
 - planes (id, nombre, servicio, tipo)
 - formas_pago (id, nombre, tipo)
@@ -21,9 +26,11 @@ Eres un experto SQL. Tienes esta base de datos PostgreSQL:
 - ventas (id, jornada_promotor_id, plan_id, forma_pago_id, monto, created_at)
 - stands (id, nombre, zona_id, localidad_id)
 
-RELACIONES:
-- ventas -> jornada_promotores -> jornadas -> zonas
-- ventas -> jornada_promotores -> promotores
+Relaciones:
+- ventas.jornada_promotor_id -> jornada_promotores.id
+- jornada_promotores.promotor_id -> promotores.id
+- jornada_promotores.jornada_id -> jornadas.id
+- jornadas.zona_id -> zonas.id
 `;
 
 router.post("/chat", auth, async (req, res) => {
@@ -31,60 +38,60 @@ router.post("/chat", auth, async (req, res) => {
   const { rol, zona_id } = req.user;
 
   try {
-    // --- FASE 1: Generar SQL ---
-    let promptSQL = `${DB_SCHEMA}
-        
-        El usuario pregunta: "${pregunta}"
-        
-        Genera una consulta SQL SELECT para responder.
-        REGLAS:
-        1. Solo devuelve el código SQL puro, sin markdown ni explicaciones.
-        2. Usa COALESCE(SUM(monto), 0) para sumas.
-        3. La fecha actual es ${new Date().toISOString().split("T")[0]}.
+    console.log("Pregunta recibida:", pregunta);
+
+    // 1. Generar SQL
+    let promptSQL = `
+            ${DB_SCHEMA}
+            
+            Genera una consulta SQL SELECT válida para responder: "${pregunta}"
+            
+            REGLAS OBLIGATORIAS:
+            1. Responde SOLO con el código SQL. Nada de markdown, nada de comillas invertidas (\`\`\`).
+            2. No uses bloques \`\`\`sql ... \`\`\`. Solo texto plano.
+            3. Usa COALESCE(SUM(monto), 0) para sumas de dinero.
+            4. La fecha de hoy es '${new Date().toISOString().split("T")[0]}'.
         `;
 
-    // Seguridad RLS para Líderes
     if (rol === "Lider") {
-      promptSQL += `\nIMPORTANTE: Filtra los datos donde la tabla relacionada con 'zona' tenga id = '${zona_id}'.`;
+      promptSQL += `\n5. FILTRO OBLIGATORIO: Filtra los datos por la zona con ID '${zona_id}' haciendo los JOIN necesarios.`;
     }
 
     const resultSQL = await model.generateContent(promptSQL);
-    let sqlQuery = resultSQL.response.text();
+    let sqlQuery = resultSQL.response.text().trim();
 
-    // Limpiar el SQL (Gemini a veces pone \`\`\`sql ... \`\`\`)
+    // Limpieza agresiva de markdown por si Gemini desobedece
     sqlQuery = sqlQuery
       .replace(/```sql/g, "")
       .replace(/```/g, "")
       .trim();
 
-    console.log("SQL Generado:", sqlQuery); // Para que lo veas en los logs de Render
+    console.log("SQL Generado:", sqlQuery);
 
-    // Validación de seguridad (Solo lectura)
     if (!sqlQuery.toUpperCase().startsWith("SELECT")) {
       return res.json({
-        respuesta: "Solo puedo consultar datos, no modificarlos.",
+        respuesta: "Solo puedo realizar consultas de lectura.",
       });
     }
 
-    // --- FASE 2: Ejecutar SQL ---
+    // 2. Ejecutar SQL
     const datos = await pool.query(sqlQuery);
 
     if (datos.rows.length === 0) {
       return res.json({
-        respuesta: "No encontré datos que coincidan con tu consulta.",
+        respuesta: "No encontré información con esos criterios.",
       });
     }
 
-    // --- FASE 3: Interpretar Datos ---
-    const datosJson = JSON.stringify(datos.rows).substring(0, 5000); // Limitamos tamaño por seguridad
+    // 3. Interpretar resultados
+    const datosJson = JSON.stringify(datos.rows).substring(0, 4000); // Limitar caracteres
 
     const promptTexto = `
-            Pregunta: "${pregunta}"
-            Datos obtenidos (JSON): ${datosJson}
+            Datos encontrados (JSON): ${datosJson}
+            Pregunta original: "${pregunta}"
             
-            Actúa como un analista de negocios experto.
-            Analiza los datos y responde la pregunta del usuario de forma clara, concisa y profesional.
-            Si hay montos, dales formato de dinero.
+            Responde al usuario basándote en los datos. Sé breve y profesional.
+            Si hay dinero, usa formato moneda.
         `;
 
     const resultTexto = await model.generateContent(promptTexto);
@@ -92,16 +99,12 @@ router.post("/chat", auth, async (req, res) => {
 
     res.json({ respuesta: respuestaFinal });
   } catch (err) {
-    console.error("Error IA:", err);
-    // A veces la IA genera SQL inválido, manejamos el error
-    if (err.code) {
-      res.json({
-        respuesta:
-          "Entendí la pregunta, pero intenté hacer una consulta compleja y falló. Intenta ser más específico.",
+    console.error("Error en /api/ia/chat:", err);
+    res
+      .status(500)
+      .json({
+        error: "Error interno del asistente. Revisa los logs del servidor.",
       });
-    } else {
-      res.status(500).json({ error: "Error conectando con la IA." });
-    }
   }
 });
 
