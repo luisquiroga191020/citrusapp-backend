@@ -4,7 +4,7 @@ const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/roles");
 
 // ================================================================
-// 1. LISTAR TODOS LOS PERIODOS (Para la vista de Gestión)
+// 1. LISTAR PERIODOS (Vista Gestión)
 // ================================================================
 router.get("/", auth, async (req, res) => {
   try {
@@ -33,63 +33,34 @@ router.get("/", auth, async (req, res) => {
 });
 
 // ================================================================
-// 2. CREAR PERIODO + ASIGNAR PROMOTORES (Transacción)
+// 2. OBTENER UN PERIODO POR ID (Para editar)
 // ================================================================
-router.post(
-  "/",
-  auth,
-  verifyRole(["Administrador", "Lider"]),
-  async (req, res) => {
-    const client = await pool.connect(); // Usamos cliente para transacción
-    try {
-      await client.query("BEGIN"); // Iniciar transacción
+router.get("/:id", auth, async (req, res) => {
+  try {
+    // Datos del periodo
+    const periodoRes = await pool.query(
+      "SELECT * FROM periodos WHERE id = $1",
+      [req.params.id]
+    );
+    if (periodoRes.rows.length === 0)
+      return res.status(404).json({ error: "Periodo no encontrado" });
 
-      const {
-        nombre,
-        zona_id,
-        fecha_inicio,
-        fecha_fin,
-        dias_operativos,
-        estado,
-        promotores,
-      } = req.body;
-      // 'promotores' es un array: [{ id, objetivo, tipo_jornada }, ...]
+    // Promotores asignados a este periodo
+    const promotoresRes = await pool.query(
+      `
+            SELECT pp.promotor_id as id, pp.tipo_jornada, pp.objetivo, pr.nombre_completo 
+            FROM periodo_promotores pp
+            JOIN promotores pr ON pp.promotor_id = pr.id
+            WHERE pp.periodo_id = $1
+        `,
+      [req.params.id]
+    );
 
-      // Validación de seguridad para Lider (No puede crear en otra zona)
-      if (req.user.rol === "Lider" && req.user.zona_id !== zona_id) {
-        throw new Error("No tienes permisos para crear periodos en esta zona.");
-      }
-
-      // A. Insertar el Periodo
-      const periodRes = await client.query(
-        `INSERT INTO periodos (nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado) 
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-        [nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado]
-      );
-      const periodoId = periodRes.rows[0].id;
-
-      // B. Asignar Promotores (Loop)
-      if (promotores && promotores.length > 0) {
-        for (const p of promotores) {
-          await client.query(
-            `INSERT INTO periodo_promotores (periodo_id, promotor_id, tipo_jornada, objetivo)
-                     VALUES ($1, $2, $3, $4)`,
-            [periodoId, p.id, p.tipo_jornada, p.objetivo]
-          );
-        }
-      }
-
-      await client.query("COMMIT"); // Confirmar cambios
-      res.json({ message: "Periodo creado exitosamente", id: periodoId });
-    } catch (e) {
-      await client.query("ROLLBACK"); // Deshacer cambios si falla
-      console.error(e);
-      res.status(500).json({ error: e.message || "Error al crear periodo" });
-    } finally {
-      client.release();
-    }
+    res.json({ ...periodoRes.rows[0], promotores: promotoresRes.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-);
+});
 
 // ================================================================
 // 3. OBTENER PERIODO ACTIVO POR ZONA (Para iniciar Jornada)
@@ -97,7 +68,7 @@ router.post(
 router.get("/activo/:zona_id", auth, async (req, res) => {
   const { zona_id } = req.params;
   try {
-    // A. Buscar periodo activo donde la fecha actual esté en rango
+    // Buscar periodo activo donde la fecha actual esté en rango
     const query = `
             SELECT p.* 
             FROM periodos p
@@ -112,7 +83,7 @@ router.get("/activo/:zona_id", auth, async (req, res) => {
 
     const periodo = result.rows[0];
 
-    // B. Obtener los promotores asignados a este periodo (con sus datos maestros)
+    // Obtener los promotores asignados a este periodo con sus datos
     const promotoresQuery = `
             SELECT 
                 pp.promotor_id, 
@@ -127,7 +98,6 @@ router.get("/activo/:zona_id", auth, async (req, res) => {
         `;
     const promotoresRes = await pool.query(promotoresQuery, [periodo.id]);
 
-    // Devolvemos el periodo con la lista de promotores lista para usar
     res.json({ ...periodo, promotores: promotoresRes.rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -135,7 +105,137 @@ router.get("/activo/:zona_id", auth, async (req, res) => {
 });
 
 // ================================================================
-// 4. ELIMINAR PERIODO
+// 4. CREAR PERIODO (Transacción)
+// ================================================================
+router.post(
+  "/",
+  auth,
+  verifyRole(["Administrador", "Lider"]),
+  async (req, res) => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const {
+        nombre,
+        zona_id,
+        fecha_inicio,
+        fecha_fin,
+        dias_operativos,
+        estado,
+        promotores,
+      } = req.body;
+
+      // Validación Lider
+      if (req.user.rol === "Lider" && req.user.zona_id !== zona_id) {
+        throw new Error("No tienes permisos para esta zona.");
+      }
+
+      const periodRes = await client.query(
+        `INSERT INTO periodos (nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado) 
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado]
+      );
+      const periodoId = periodRes.rows[0].id;
+
+      if (promotores && promotores.length > 0) {
+        for (const p of promotores) {
+          await client.query(
+            `INSERT INTO periodo_promotores (periodo_id, promotor_id, tipo_jornada, objetivo)
+                     VALUES ($1, $2, $3, $4)`,
+            [periodoId, p.id, p.tipo_jornada, p.objetivo]
+          );
+        }
+      }
+
+      await client.query("COMMIT");
+      res.json({ message: "Periodo creado exitosamente", id: periodoId });
+    } catch (e) {
+      await client.query("ROLLBACK");
+      res.status(500).json({ error: e.message });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ================================================================
+// 5. EDITAR PERIODO (Transacción: Update + Re-insert Promotores)
+// ================================================================
+router.put(
+  "/:id",
+  auth,
+  verifyRole(["Administrador", "Lider"]),
+  async (req, res) => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { id } = req.params;
+      const {
+        nombre,
+        zona_id,
+        fecha_inicio,
+        fecha_fin,
+        dias_operativos,
+        estado,
+        promotores,
+      } = req.body;
+
+      // Validación Lider
+      if (req.user.rol === "Lider" && req.user.zona_id !== zona_id) {
+        throw new Error("No tienes permisos para esta zona.");
+      }
+
+      // 1. Actualizar Periodo
+      await client.query(
+        `UPDATE periodos SET nombre=$1, zona_id=$2, fecha_inicio=$3, fecha_fin=$4, dias_operativos=$5, estado=$6 WHERE id=$7`,
+        [nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado, id]
+      );
+
+      // 2. Actualizar Promotores (Borrar viejos e insertar nuevos)
+      // Nota: Esto fallará si ya hay jornadas cargadas vinculadas a un promotor que intentas quitar.
+      // Postgres lanzará error de Foreign Key, lo cual es correcto para integridad de datos.
+
+      // Borramos asignaciones previas
+      await client.query(
+        "DELETE FROM periodo_promotores WHERE periodo_id = $1",
+        [id]
+      );
+
+      // Insertamos las nuevas (que pueden ser las mismas editadas)
+      if (promotores && promotores.length > 0) {
+        for (const p of promotores) {
+          await client.query(
+            `INSERT INTO periodo_promotores (periodo_id, promotor_id, tipo_jornada, objetivo)
+                     VALUES ($1, $2, $3, $4)`,
+            [id, p.id, p.tipo_jornada, p.objetivo]
+          );
+        }
+      }
+
+      await client.query("COMMIT");
+      res.json({ message: "Periodo actualizado exitosamente" });
+    } catch (e) {
+      await client.query("ROLLBACK");
+      console.error(e);
+      // Manejo de error de clave foránea más amigable
+      if (e.code === "23503") {
+        res
+          .status(400)
+          .json({
+            error:
+              "No se puede quitar un promotor que ya tiene jornadas/ventas cargadas en este periodo.",
+          });
+      } else {
+        res.status(500).json({ error: e.message });
+      }
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ================================================================
+// 6. ELIMINAR PERIODO
 // ================================================================
 router.delete(
   "/:id",
@@ -143,8 +243,6 @@ router.delete(
   verifyRole(["Administrador", "Lider"]),
   async (req, res) => {
     try {
-      // Al borrar el periodo, se borran los periodo_promotores por el ON DELETE CASCADE de la DB.
-      // Pero si hay jornadas creadas, fallará (lo cual es correcto para integridad).
       await pool.query("DELETE FROM periodos WHERE id = $1", [req.params.id]);
       res.json({ message: "Periodo eliminado correctamente" });
     } catch (err) {
@@ -152,7 +250,7 @@ router.delete(
         .status(500)
         .json({
           error:
-            "No se puede eliminar: Probablemente ya existan jornadas cargadas en este periodo.",
+            "No se puede eliminar: Probablemente ya existan jornadas cargadas.",
         });
     }
   }
