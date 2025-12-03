@@ -15,6 +15,7 @@ const formasPagoRoutes = require("./routes/formasPago");
 const localidadesRoutes = require("./routes/localidades");
 const standsRoutes = require("./routes/stands");
 const analyticsRoutes = require("./routes/analytics");
+const iaRoutes = require("./routes/ia");
 
 const app = express();
 app.use(express.json());
@@ -98,4 +99,5 @@ app.use("/api/formas-pago", formasPagoRoutes);
 app.use("/api/localidades", localidadesRoutes);
 app.use("/api/stands", standsRoutes);
 app.use("/api/analytics", analyticsRoutes);
+app.use("/api/ia", iaRoutes);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
