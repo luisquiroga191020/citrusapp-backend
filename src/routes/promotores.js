@@ -2,27 +2,23 @@ const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
 
-// Listar Promotores (Ahora con Zona)
+// Listar
 router.get("/", auth, async (req, res) => {
   try {
-    const query = `
-            SELECT p.*, z.nombre as zona_nombre 
-            FROM promotores p
-            LEFT JOIN zonas z ON p.zona_id = z.id
-            ORDER BY p.nombre_completo ASC
-        `;
-    const result = await pool.query(query);
+    const result = await pool.query(
+      "SELECT p.*, z.nombre as zona_nombre FROM promotores p LEFT JOIN zonas z ON p.zona_id = z.id ORDER BY p.nombre_completo"
+    );
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Listar Promotores por Zona (Para usar en Periodos)
+// Listar por Zona
 router.get("/zona/:zona_id", auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM promotores WHERE zona_id = $1 ORDER BY nombre_completo ASC`,
+      "SELECT * FROM promotores WHERE zona_id = $1 ORDER BY nombre_completo",
       [req.params.zona_id]
     );
     res.json(result.rows);
@@ -31,46 +27,85 @@ router.get("/zona/:zona_id", auth, async (req, res) => {
   }
 });
 
-// Crear Promotor (Con Zona y Objetivo Base)
-router.post("/", auth, async (req, res) => {
-  const { codigo, nombre_completo, foto_url, zona_id, objetivo_base } =
-    req.body;
+// PERFORMANCE HISTÓRICO
+router.get("/:id/performance", auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      "INSERT INTO promotores (codigo, nombre_completo, foto_url, zona_id, objetivo_base) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-      [codigo, nombre_completo, foto_url, zona_id, objetivo_base]
-    );
-    res.json(result.rows[0]);
+    const query = `
+            SELECT p.nombre as periodo, pp.objetivo, 
+            COALESCE(SUM(v.monto),0) as venta_real,
+            (COALESCE(SUM(v.monto),0) - pp.objetivo) as delta
+            FROM periodo_promotores pp
+            JOIN periodos p ON pp.periodo_id = p.id
+            LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id AND jp.jornada_id IN (SELECT id FROM jornadas WHERE periodo_id = p.id))
+            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+            WHERE pp.promotor_id = $1
+            GROUP BY p.nombre, pp.objetivo, p.fecha_inicio
+            ORDER BY p.fecha_inicio DESC
+        `;
+    const result = await pool.query(query, [req.params.id]);
+    res.json(result.rows);
   } catch (err) {
-    if (err.code === "23505")
-      return res.status(400).json({ error: "El código ya existe" });
     res.status(500).json({ error: err.message });
   }
 });
 
-// Editar Promotor
-router.put("/:id", auth, async (req, res) => {
-  const { id } = req.params;
-  const { codigo, nombre_completo, foto_url, zona_id, objetivo_base } =
-    req.body;
+// Crear
+router.post("/", auth, async (req, res) => {
+  const {
+    codigo,
+    nombre_completo,
+    foto_url,
+    zona_id,
+    objetivo_base,
+    tipo_jornada,
+  } = req.body;
   try {
     await pool.query(
-      "UPDATE promotores SET codigo = $1, nombre_completo = $2, foto_url = $3, zona_id = $4, objetivo_base = $5 WHERE id = $6",
-      [codigo, nombre_completo, foto_url, zona_id, objetivo_base, id]
+      "INSERT INTO promotores (codigo, nombre_completo, foto_url, zona_id, objetivo_base, tipo_jornada) VALUES ($1, $2, $3, $4, $5, $6)",
+      [codigo, nombre_completo, foto_url, zona_id, objetivo_base, tipo_jornada]
     );
-    res.json({ message: "Promotor actualizado" });
+    res.json({ message: "Creado" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Eliminar (Igual que antes)
+// Editar
+router.put("/:id", auth, async (req, res) => {
+  const {
+    codigo,
+    nombre_completo,
+    foto_url,
+    zona_id,
+    objetivo_base,
+    tipo_jornada,
+  } = req.body;
+  try {
+    await pool.query(
+      "UPDATE promotores SET codigo=$1, nombre_completo=$2, foto_url=$3, zona_id=$4, objetivo_base=$5, tipo_jornada=$6 WHERE id=$7",
+      [
+        codigo,
+        nombre_completo,
+        foto_url,
+        zona_id,
+        objetivo_base,
+        tipo_jornada,
+        req.params.id,
+      ]
+    );
+    res.json({ message: "Actualizado" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Borrar
 router.delete("/:id", auth, async (req, res) => {
   try {
     await pool.query("DELETE FROM promotores WHERE id = $1", [req.params.id]);
-    res.json({ message: "Promotor eliminado" });
+    res.json({ message: "Eliminado" });
   } catch (err) {
-    res.status(500).json({ error: "No se puede eliminar (tiene historial)" });
+    res.status(500).json({ error: "No se puede eliminar" });
   }
 });
 
