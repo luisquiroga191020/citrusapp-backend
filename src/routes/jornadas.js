@@ -9,6 +9,8 @@ const verifyRole = require("../middleware/roles");
 router.get("/", auth, async (req, res) => {
   try {
     const { rol, zona_id } = req.user;
+
+    // Construcción dinámica de la query según el rol
     let query = `
             SELECT 
                 j.id, 
@@ -83,6 +85,20 @@ router.post(
 
       await client.query("BEGIN"); // Iniciar transacción
 
+      // --- VALIDACIÓN DE DUPLICADOS ---
+      // No permitir crear otra jornada para la misma zona en la misma fecha
+      const checkDuplicado = await client.query(
+        `SELECT id FROM jornadas WHERE zona_id = $1 AND fecha = $2`,
+        [zona_id, fecha]
+      );
+
+      if (checkDuplicado.rows.length > 0) {
+        throw new Error(
+          "Ya existe una jornada abierta para esta fecha en esta zona."
+        );
+      }
+      // --------------------------------
+
       // 1. Insertar la Cabecera de la Jornada
       const jornadaRes = await client.query(
         `INSERT INTO jornadas (fecha, periodo_id, zona_id, created_by) 
@@ -94,7 +110,6 @@ router.post(
       // 2. Insertar los Promotores y sus Stands para este día
       if (asignaciones && asignaciones.length > 0) {
         for (const asign of asignaciones) {
-          // Solo insertamos si vienen los datos necesarios
           if (asign.promotor_id && asign.stand_id) {
             await client.query(
               `INSERT INTO jornada_promotores (jornada_id, promotor_id, stand_id)
@@ -110,13 +125,6 @@ router.post(
     } catch (err) {
       await client.query("ROLLBACK"); // Cancelar si algo falla
       console.error(err);
-      // Manejar error de duplicado (Unique constraint)
-      if (err.code === "23505") {
-        return res.status(400).json({
-          error:
-            "Ya existe una jornada o asignación duplicada para esta fecha.",
-        });
-      }
       res.status(500).json({ error: err.message });
     } finally {
       client.release();
@@ -144,12 +152,12 @@ router.get("/:id", auth, async (req, res) => {
       return res.status(404).json({ error: "Jornada no encontrada" });
 
     // B. Promotores trabajando hoy (Pivot Table) + Sus totales
-    // Esta query es vital para la UI de carga de ventas
     const promotoresQuery = `
             SELECT 
-                jp.id as jornada_promotor_id, -- ESTE ID ES EL QUE SE USA PARA INSERTAR VENTA
+                jp.id as jornada_promotor_id, -- ID CLAVE PARA VENDER
+                jp.promotor_id,
                 pr.nombre_completo,
-                pr.foto_url,
+                pr.foto_url, -- FOTO AGREGADA
                 s.nombre as stand_nombre,
                 pp.tipo_jornada,
                 pp.objetivo as objetivo_mensual,
@@ -159,21 +167,22 @@ router.get("/:id", auth, async (req, res) => {
             FROM jornada_promotores jp
             JOIN promotores pr ON jp.promotor_id = pr.id
             JOIN stands s ON jp.stand_id = s.id
-            -- Traemos datos del periodo para saber si es FullTime/PartTime
             JOIN jornadas j ON jp.jornada_id = j.id
+            -- Cruzamos con Periodo para saber el objetivo vigente
             JOIN periodo_promotores pp ON (pp.periodo_id = j.periodo_id AND pp.promotor_id = jp.promotor_id)
             WHERE jp.jornada_id = $1
             ORDER BY pr.nombre_completo ASC
         `;
     const promotoresRes = await pool.query(promotoresQuery, [id]);
 
-    // C. Listado de Ventas (Detalle completo para tabla inferior)
+    // C. Listado de Ventas (Detalle completo)
     const ventasQuery = `
             SELECT 
                 v.id, v.codigo_ficha, v.monto, v.created_at,
                 pl.nombre as plan_nombre,
                 fp.nombre as forma_pago,
-                pr.nombre_completo as promotor
+                pr.nombre_completo as promotor,
+                pr.id as promotor_id -- IMPORTANTE PARA FILTRADO EN FRONTEND
             FROM ventas v
             JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
             JOIN promotores pr ON jp.promotor_id = pr.id
@@ -196,29 +205,47 @@ router.get("/:id", auth, async (req, res) => {
 });
 
 // ==========================================
-// 4. REGISTRAR VENTA
+// 4. EDITAR JORNADA (Cambiar fecha)
+// ==========================================
+router.put(
+  "/:id",
+  auth,
+  verifyRole(["Administrador", "Lider"]),
+  async (req, res) => {
+    const { fecha } = req.body;
+    try {
+      await pool.query("UPDATE jornadas SET fecha = $1 WHERE id = $2", [
+        fecha,
+        req.params.id,
+      ]);
+      res.json({ message: "Jornada actualizada" });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+// ==========================================
+// 5. REGISTRAR VENTA
 // ==========================================
 router.post("/ventas", auth, async (req, res) => {
-  // Nota: Recibimos jornada_promotor_id, NO el id del promotor ni de la jornada directos.
-  // Esto asegura integridad referencial (solo se vende si trabajó ese día).
   const { jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha } =
     req.body;
-
   try {
-    const result = await pool.query(
+    await pool.query(
       `INSERT INTO ventas (jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha)
-             VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+             VALUES ($1, $2, $3, $4, $5)`,
       [jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha]
     );
-    res.json({ message: "Venta registrada", id: result.rows[0].id });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error al registrar la venta" });
+    res.json({ message: "Venta registrada" });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
   }
 });
 
 // ==========================================
-// 5. ELIMINAR VENTA
+// 6. ELIMINAR VENTA
 // ==========================================
 router.delete(
   "/ventas/:id",
@@ -228,8 +255,8 @@ router.delete(
     try {
       await pool.query("DELETE FROM ventas WHERE id = $1", [req.params.id]);
       res.json({ message: "Venta eliminada correctamente" });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
     }
   }
 );
