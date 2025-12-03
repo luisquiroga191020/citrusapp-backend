@@ -1,19 +1,20 @@
-const router = require('express').Router();
-const pool = require('../db');
-const auth = require('../middleware/auth');
+const router = require("express").Router();
+const pool = require("../db");
+const auth = require("../middleware/auth");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// Verificar clave
-const API_KEY = process.env.GEMINI_API_KEY;
-if (!API_KEY) console.error("ERROR: Falta GEMINI_API_KEY");
+// Verificación de seguridad de la clave
+if (!process.env.GEMINI_API_KEY) {
+  console.error(
+    "ERROR FATAL: No se encontró GEMINI_API_KEY en las variables de entorno."
+  );
+}
 
-const genAI = new GoogleGenerativeAI(API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Usamos el modelo Flash, ideal para respuestas rápidas
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// --- CAMBIO IMPORTANTE: Usamos un modelo "seguro" por defecto ---
-// Si este falla, el código intentará listar los disponibles
-const MODEL_NAME = "gemini-1.5-flash"; 
-const model = genAI.getGenerativeModel({ model: MODEL_NAME });
-
+// El mapa de tu base de datos para que la IA entienda qué buscar
 const DB_SCHEMA = `
 Tablas PostgreSQL:
 - zonas (id, nombre, color_identificador)
@@ -24,7 +25,7 @@ Tablas PostgreSQL:
 - periodos (id, nombre, zona_id, fecha_inicio, fecha_fin, estado)
 - jornadas (id, fecha, periodo_id, zona_id)
 - jornada_promotores (id, jornada_id, promotor_id, stand_id)
-- ventas (id, jornada_promotor_id, plan_id, forma_pago_id, monto, created_at)
+- ventas (id, jornada_promotor_id, plan_id, forma_pago_id, monto, created_at, codigo_ficha)
 - stands (id, nombre, zona_id, localidad_id)
 
 Relaciones:
@@ -32,75 +33,90 @@ Relaciones:
 - jornada_promotores.promotor_id -> promotores.id
 - jornada_promotores.jornada_id -> jornadas.id
 - jornadas.zona_id -> zonas.id
+- ventas.plan_id -> planes.id
+- ventas.forma_pago_id -> formas_pago.id
 `;
 
-// RUTA DE DIAGNÓSTICO (Para ver qué modelos ve tu clave)
-router.get('/debug-models', async (req, res) => {
-    try {
-        // Consulta directa a la API REST de Google para ver modelos
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}`);
-        const data = await response.json();
-        
-        console.log("MODELOS DISPONIBLES PARA TU CLAVE:", JSON.stringify(data, null, 2));
-        
-        if (data.error) {
-            return res.status(400).json(data.error);
-        }
-        res.json(data);
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
+router.post("/chat", auth, async (req, res) => {
+  const { pregunta } = req.body;
+  const { rol, zona_id } = req.user;
 
-router.post('/chat', auth, async (req, res) => {
-    const { pregunta } = req.body;
-    const { rol, zona_id } = req.user;
+  try {
+    console.log("Pregunta recibida:", pregunta);
 
-    try {
-        console.log(`Intento consulta con modelo: ${MODEL_NAME}`);
-        
-        let promptSQL = `
+    // --- PASO 1: Generar SQL ---
+    let promptSQL = `
             ${DB_SCHEMA}
-            Genera SQL SELECT para: "${pregunta}"
-            REGLAS: Solo SQL puro. Sin markdown. Fecha hoy: '${new Date().toISOString().split('T')[0]}'.
+            
+            Actúa como un experto en SQL. Genera una consulta SELECT (PostgreSQL) para responder: "${pregunta}"
+            
+            REGLAS OBLIGATORIAS:
+            1. Responde SOLAMENTE con el código SQL. Sin markdown, sin comillas invertidas (\`\`\`), sin explicaciones.
+            2. Usa COALESCE(SUM(monto), 0) para sumas de dinero.
+            3. La fecha de hoy es '${new Date().toISOString().split("T")[0]}'.
+            4. Si piden "ventas de hoy", usa: jornadas.fecha = CURRENT_DATE.
         `;
 
-        if (rol === 'Lider') promptSQL += `\nFiltra por zona_id = '${zona_id}'`;
-
-        // 1. Generar SQL
-        const resultSQL = await model.generateContent(promptSQL);
-        let sqlQuery = resultSQL.response.text().replace(/```sql/g, '').replace(/```/g, '').trim();
-        
-        console.log("SQL Generado:", sqlQuery);
-
-        if (!sqlQuery.toUpperCase().startsWith('SELECT')) {
-            return res.json({ respuesta: "Solo puedo leer datos." });
-        }
-
-        // 2. Ejecutar SQL
-        const datos = await pool.query(sqlQuery);
-        
-        // 3. Respuesta Humana
-        const datosJson = JSON.stringify(datos.rows).substring(0, 4000);
-        const resultTexto = await model.generateContent(`
-            Datos: ${datosJson}. Pregunta: "${pregunta}". 
-            Responde como analista experto, brevemente.
-        `);
-        
-        res.json({ respuesta: resultTexto.response.text() });
-
-    } catch (err) {
-        console.error("ERROR IA:", err);
-        
-        // Si es 404, damos instrucciones claras
-        if (err.message.includes("404") || err.message.includes("Not Found")) {
-            res.status(500).json({ 
-                error: `El modelo ${MODEL_NAME} no está disponible para tu clave. Ve a /api/ia/debug-models para ver cuáles tienes.` 
-            });
-        } else {
-            res.status(500).json({ error: "Error procesando la consulta." });
-        }
+    // Seguridad: Si es Líder, solo ve su zona
+    if (rol === "Lider") {
+      promptSQL += `\n5. FILTRO DE SEGURIDAD: Debes filtrar obligatoriamente por la zona con ID '${zona_id}' haciendo los JOINs necesarios hacia la tabla zonas o jornadas.`;
     }
+
+    const resultSQL = await model.generateContent(promptSQL);
+    let sqlQuery = resultSQL.response.text().trim();
+
+    // Limpieza de texto por si la IA responde con formato
+    sqlQuery = sqlQuery
+      .replace(/```sql/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    console.log("SQL Generado:", sqlQuery);
+
+    // Validación de seguridad (Solo lectura)
+    if (!sqlQuery.toUpperCase().startsWith("SELECT")) {
+      return res.json({
+        respuesta:
+          "Lo siento, solo tengo permisos para leer datos, no para modificar.",
+      });
+    }
+
+    // --- PASO 2: Ejecutar SQL ---
+    const datos = await pool.query(sqlQuery);
+
+    if (datos.rows.length === 0) {
+      return res.json({
+        respuesta:
+          "Analicé la base de datos y no encontré registros que coincidan con tu búsqueda.",
+      });
+    }
+
+    // --- PASO 3: Generar Respuesta Humana ---
+    // Convertimos los datos a texto, limitando el tamaño para no saturar a la IA
+    const datosJson = JSON.stringify(datos.rows).substring(0, 4000);
+
+    const promptTexto = `
+            Contexto: El usuario preguntó: "${pregunta}"
+            Resultados de la base de datos: ${datosJson}
+            
+            Instrucción: Responde al usuario de forma natural, breve y profesional basándote en estos datos.
+            - Si hay montos de dinero, usa el formato $ 1.234.
+            - Si es una lista larga, resume los puntos clave o da el top 3.
+        `;
+
+    const resultTexto = await model.generateContent(promptTexto);
+    const respuestaFinal = resultTexto.response.text();
+
+    res.json({ respuesta: respuestaFinal });
+  } catch (err) {
+    console.error("Error en Chat IA:", err);
+    res
+      .status(500)
+      .json({
+        error:
+          "Tuve un problema técnico al procesar tu consulta. Por favor intenta de nuevo.",
+      });
+  }
 });
 
 module.exports = router;
