@@ -16,6 +16,7 @@ const localidadesRoutes = require("./routes/localidades");
 const standsRoutes = require("./routes/stands");
 const analyticsRoutes = require("./routes/analytics");
 const iaRoutes = require("./routes/ia");
+const planificadorRoutes = require('./routes/planificador');
 
 const app = express();
 app.use(express.json());
@@ -100,4 +101,5 @@ app.use("/api/localidades", localidadesRoutes);
 app.use("/api/stands", standsRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/ia", iaRoutes);
+app.use('/api/planificador', planificadorRoutes);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
