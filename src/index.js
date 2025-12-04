@@ -16,7 +16,7 @@ const localidadesRoutes = require("./routes/localidades");
 const standsRoutes = require("./routes/stands");
 const analyticsRoutes = require("./routes/analytics");
 const iaRoutes = require("./routes/ia");
-const planificadorRoutes = require('./routes/planificador');
+const planificadorRoutes = require("./routes/planificador");
 
 const app = express();
 app.use(express.json());
@@ -54,19 +54,25 @@ app.post("/auth/login", async (req, res) => {
   if (!validPass)
     return res.status(400).json({ error: "Contraseña incorrecta" });
 
-  // Crear Token
+  const usuarioData = user.rows[0]; // Datos de la DB
+
   const token = jwt.sign(
-    { id: user.rows[0].id, rol: user.rows[0].rol },
+    {
+      id: usuarioData.id,
+      rol: usuarioData.rol,
+      zona_id: usuarioData.zona_id, // <--- IMPORTANTE: Incluirlo en el token
+    },
     process.env.JWT_SECRET,
     { expiresIn: "12h" }
   );
 
-  res.header("auth-token", token).json({
+  res.json({
     token,
     user: {
-      id: user.rows[0].id,
-      nombre: user.rows[0].nombre_completo,
-      rol: user.rows[0].rol,
+      id: usuarioData.id,
+      nombre: usuarioData.nombre_completo,
+      rol: usuarioData.rol,
+      zona_id: usuarioData.zona_id, // <--- IMPORTANTE: Enviarlo al frontend
     },
   });
 });
@@ -101,5 +107,5 @@ app.use("/api/localidades", localidadesRoutes);
 app.use("/api/stands", standsRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/ia", iaRoutes);
-app.use('/api/planificador', planificadorRoutes);
+app.use("/api/planificador", planificadorRoutes);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
