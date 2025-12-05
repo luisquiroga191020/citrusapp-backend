@@ -2,7 +2,7 @@ const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
 
-// 1. LISTAR (Incluye zona y nuevos campos)
+// 1. LISTAR
 router.get("/", auth, async (req, res) => {
   try {
     const query = `
@@ -31,14 +31,13 @@ router.get("/zona/:zona_id", auth, async (req, res) => {
   }
 });
 
-// 3. CREAR
+// 3. CREAR (Sin campo oficina suelto)
 router.post("/", auth, async (req, res) => {
   const {
     nombre,
     departamento,
     zona_id,
     presencia,
-    oficina,
     poblacion,
     certificados_activos,
     viviendas,
@@ -49,15 +48,14 @@ router.post("/", auth, async (req, res) => {
   try {
     const result = await pool.query(
       `INSERT INTO localidades 
-            (nombre, departamento, zona_id, presencia, oficina, poblacion, certificados_activos, viviendas, latitud, longitud) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+            (nombre, departamento, zona_id, presencia, poblacion, certificados_activos, viviendas, latitud, longitud) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
             RETURNING *`,
       [
         nombre,
         departamento,
         zona_id,
         presencia,
-        oficina,
         poblacion,
         certificados_activos,
         viviendas,
@@ -79,7 +77,6 @@ router.put("/:id", auth, async (req, res) => {
     departamento,
     zona_id,
     presencia,
-    oficina,
     poblacion,
     certificados_activos,
     viviendas,
@@ -91,16 +88,15 @@ router.put("/:id", auth, async (req, res) => {
     await pool.query(
       `UPDATE localidades SET 
                 nombre = $1, departamento = $2, zona_id = $3, 
-                presencia = $4, oficina = $5, poblacion = $6, 
-                certificados_activos = $7, viviendas = $8, 
-                latitud = $9, longitud = $10
-             WHERE id = $11`,
+                presencia = $4, poblacion = $5, 
+                certificados_activos = $6, viviendas = $7, 
+                latitud = $8, longitud = $9
+             WHERE id = $10`,
       [
         nombre,
         departamento,
         zona_id,
         presencia,
-        oficina,
         poblacion,
         certificados_activos,
         viviendas,
