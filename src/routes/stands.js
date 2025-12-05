@@ -2,14 +2,21 @@ const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
 
-// Listar Stands
+// 1. LISTAR STANDS (Con array de localidades)
 router.get("/", auth, async (req, res) => {
   try {
+    // Usamos array_agg de Postgres para juntar las localidades en una sola fila
     const query = `
-            SELECT s.*, z.nombre as zona_nombre, l.nombre as localidad_nombre
+            SELECT 
+                s.*, 
+                z.nombre as zona_nombre,
+                array_remove(array_agg(l.nombre), NULL) as nombres_localidades,
+                array_remove(array_agg(l.id), NULL) as ids_localidades
             FROM stands s
             JOIN zonas z ON s.zona_id = z.id
-            JOIN localidades l ON s.localidad_id = l.id
+            LEFT JOIN stand_localidades sl ON s.id = sl.stand_id
+            LEFT JOIN localidades l ON sl.localidad_id = l.id
+            GROUP BY s.id, z.nombre
             ORDER BY s.nombre ASC
         `;
     const result = await pool.query(query);
@@ -19,59 +26,109 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
-// Filtrar Stands por Zona (Para asignar en Jornadas)
+// 2. FILTRAR POR ZONA
 router.get("/zona/:zona_id", auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT * FROM stands WHERE zona_id = $1 ORDER BY nombre ASC",
-      [req.params.zona_id]
-    );
+    const query = `
+            SELECT 
+                s.*, 
+                array_remove(array_agg(l.nombre), NULL) as nombres_localidades
+            FROM stands s
+            LEFT JOIN stand_localidades sl ON s.id = sl.stand_id
+            LEFT JOIN localidades l ON sl.localidad_id = l.id
+            WHERE s.zona_id = $1
+            GROUP BY s.id
+            ORDER BY s.nombre ASC
+        `;
+    const result = await pool.query(query, [req.params.zona_id]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Crear Stand
+// 3. CREAR STAND
 router.post("/", auth, async (req, res) => {
-  const { nombre, zona_id, localidad_id, ubicacion_lat, ubicacion_lng } =
-    req.body;
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      "INSERT INTO stands (nombre, zona_id, localidad_id, ubicacion_lat, ubicacion_lng) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-      [nombre, zona_id, localidad_id, ubicacion_lat, ubicacion_lng]
+    await client.query("BEGIN");
+    const { nombre, zona_id, localidades_ids, ubicacion_lat, ubicacion_lng } =
+      req.body;
+    // localidades_ids debe ser un array: ["uuid1", "uuid2"]
+
+    // A. Insertar Stand
+    const standRes = await client.query(
+      "INSERT INTO stands (nombre, zona_id, ubicacion_lat, ubicacion_lng) VALUES ($1, $2, $3, $4) RETURNING id",
+      [nombre, zona_id, ubicacion_lat, ubicacion_lng]
     );
-    res.json(result.rows[0]);
+    const standId = standRes.rows[0].id;
+
+    // B. Insertar Relaciones
+    if (localidades_ids && localidades_ids.length > 0) {
+      for (const locId of localidades_ids) {
+        await client.query(
+          "INSERT INTO stand_localidades (stand_id, localidad_id) VALUES ($1, $2)",
+          [standId, locId]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    res.json({ message: "Stand creado", id: standId });
   } catch (err) {
+    await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
-// Editar
+// 4. EDITAR STAND
 router.put("/:id", auth, async (req, res) => {
-  const { id } = req.params;
-  const { nombre, zona_id, localidad_id, ubicacion_lat, ubicacion_lng } =
-    req.body;
+  const client = await pool.connect();
   try {
-    await pool.query(
-      "UPDATE stands SET nombre = $1, zona_id = $2, localidad_id = $3, ubicacion_lat = $4, ubicacion_lng = $5 WHERE id = $6",
-      [nombre, zona_id, localidad_id, ubicacion_lat, ubicacion_lng, id]
+    await client.query("BEGIN");
+    const { id } = req.params;
+    const { nombre, zona_id, localidades_ids, ubicacion_lat, ubicacion_lng } =
+      req.body;
+
+    // A. Actualizar datos básicos
+    await client.query(
+      "UPDATE stands SET nombre = $1, zona_id = $2, ubicacion_lat = $3, ubicacion_lng = $4 WHERE id = $5",
+      [nombre, zona_id, ubicacion_lat, ubicacion_lng, id]
     );
-    res.json({ message: "Actualizado correctamente" });
+
+    // B. Actualizar Relaciones (Borrar y Crear nuevas)
+    await client.query("DELETE FROM stand_localidades WHERE stand_id = $1", [
+      id,
+    ]);
+
+    if (localidades_ids && localidades_ids.length > 0) {
+      for (const locId of localidades_ids) {
+        await client.query(
+          "INSERT INTO stand_localidades (stand_id, localidad_id) VALUES ($1, $2)",
+          [id, locId]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    res.json({ message: "Stand actualizado" });
   } catch (err) {
+    await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
-// Eliminar
+// 5. ELIMINAR
 router.delete("/:id", auth, async (req, res) => {
   try {
     await pool.query("DELETE FROM stands WHERE id = $1", [req.params.id]);
     res.json({ message: "Eliminado correctamente" });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "No se puede eliminar (tiene historial de jornadas)" });
+    res.status(500).json({ error: "No se puede eliminar (tiene historial)" });
   }
 });
 
