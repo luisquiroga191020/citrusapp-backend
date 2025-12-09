@@ -3,24 +3,38 @@ const pool = require("../db");
 const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/roles");
 
+// ==========================================
 // 1. LISTAR JORNADAS
+// ==========================================
 router.get("/", auth, async (req, res) => {
   try {
     const { rol, zona_id } = req.user;
     let query = `
-            SELECT j.id, j.fecha, j.created_at, z.nombre as zona_nombre, p.nombre as periodo_nombre,
-            (SELECT COALESCE(SUM(v.monto), 0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as total_ventas,
-            (SELECT COUNT(*) FROM jornada_promotores jp WHERE jp.jornada_id = j.id) as promotores_activos
+            SELECT 
+                j.id, 
+                j.fecha, 
+                j.created_at, 
+                z.nombre as zona_nombre, 
+                p.nombre as periodo_nombre,
+                u.nombre_completo as creador,
+                (SELECT COALESCE(SUM(v.monto), 0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as total_ventas,
+                (SELECT COUNT(*) FROM jornada_promotores jp WHERE jp.jornada_id = j.id) as promotores_activos,
+                (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as total_fichas
             FROM jornadas j
             JOIN zonas z ON j.zona_id = z.id
             JOIN periodos p ON j.periodo_id = p.id
+            JOIN usuarios u ON j.created_by = u.id
         `;
     const params = [];
+
+    // Si es Líder, solo ve su zona
     if (rol === "Lider") {
       query += " WHERE j.zona_id = $1";
       params.push(zona_id);
     }
+
     query += " ORDER BY j.fecha DESC";
+
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
@@ -28,42 +42,64 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
+// ==========================================
 // 2. DETALLE JORNADA
+// ==========================================
 router.get("/:id", auth, async (req, res) => {
   try {
+    // 1. Cabecera
     const cabecera = await pool.query(
-      `
-            SELECT j.*, z.nombre as zona_nombre, p.nombre as periodo_nombre 
-            FROM jornadas j 
-            JOIN zonas z ON j.zona_id = z.id 
-            JOIN periodos p ON j.periodo_id = p.id 
-            WHERE j.id = $1`,
+      `SELECT j.*, z.nombre as zona_nombre, p.nombre as periodo_nombre 
+       FROM jornadas j 
+       JOIN zonas z ON j.zona_id = z.id 
+       JOIN periodos p ON j.periodo_id = p.id 
+       WHERE j.id = $1`,
       [req.params.id]
     );
 
     if (cabecera.rows.length === 0)
-      return res.status(404).json({ error: "No existe" });
+      return res.status(404).json({ error: "No existe la jornada" });
 
+    // 2. Promotores (Equipo Activo)
     const promotores = await pool.query(
-      `
-            SELECT jp.id as jornada_promotor_id, jp.promotor_id, jp.stand_id, pr.nombre_completo, pr.foto_url, s.nombre as stand_nombre,
-            (SELECT COALESCE(SUM(monto),0) FROM ventas v WHERE v.jornada_promotor_id = jp.id) as venta_hoy
-            FROM jornada_promotores jp
-            JOIN promotores pr ON jp.promotor_id = pr.id
-            LEFT JOIN stands s ON jp.stand_id = s.id
-            WHERE jp.jornada_id = $1 ORDER BY pr.nombre_completo`,
+      `SELECT 
+            jp.id as jornada_promotor_id, 
+            jp.promotor_id, 
+            jp.stand_id, 
+            pr.nombre_completo, 
+            pr.foto_url, 
+            s.nombre as stand_nombre,
+            pp.tipo_jornada,
+            pp.objetivo as objetivo_mensual,
+            -- Totales calculados
+            (SELECT COALESCE(SUM(monto),0) FROM ventas v WHERE v.jornada_promotor_id = jp.id) as venta_hoy,
+            (SELECT COUNT(*)::int FROM ventas v WHERE v.jornada_promotor_id = jp.id) as fichas_hoy
+       FROM jornada_promotores jp
+       JOIN promotores pr ON jp.promotor_id = pr.id
+       LEFT JOIN stands s ON jp.stand_id = s.id
+       JOIN jornadas j ON jp.jornada_id = j.id
+       -- Join para obtener datos del periodo
+       JOIN periodo_promotores pp ON (pp.periodo_id = j.periodo_id AND pp.promotor_id = jp.promotor_id)
+       WHERE jp.jornada_id = $1 
+       ORDER BY pr.nombre_completo`,
       [req.params.id]
     );
 
+    // 3. Ventas (Detalle)
     const ventas = await pool.query(
-      `
-            SELECT v.*, pl.nombre as plan_nombre, fp.nombre as forma_pago, pr.nombre_completo as promotor, pr.id as promotor_id
-            FROM ventas v
-            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-            JOIN promotores pr ON jp.promotor_id = pr.id
-            JOIN planes pl ON v.plan_id = pl.id
-            JOIN formas_pago fp ON v.forma_pago_id = fp.id
-            WHERE jp.jornada_id = $1 ORDER BY v.created_at DESC`,
+      `SELECT 
+            v.*, 
+            pl.nombre as plan_nombre, 
+            fp.nombre as forma_pago, 
+            pr.nombre_completo as promotor, 
+            pr.id as promotor_id -- Necesario para el filtro en frontend
+       FROM ventas v
+       JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+       JOIN promotores pr ON jp.promotor_id = pr.id
+       JOIN planes pl ON v.plan_id = pl.id
+       JOIN formas_pago fp ON v.forma_pago_id = fp.id
+       WHERE jp.jornada_id = $1 
+       ORDER BY v.created_at DESC`,
       [req.params.id]
     );
 
@@ -77,7 +113,9 @@ router.get("/:id", auth, async (req, res) => {
   }
 });
 
+// ==========================================
 // 3. CREAR JORNADA
+// ==========================================
 router.post(
   "/",
   auth,
@@ -89,15 +127,16 @@ router.post(
       const { fecha, periodo_id, zona_id, asignaciones } = req.body;
 
       if (req.user.rol === "Lider" && req.user.zona_id !== zona_id)
-        throw new Error("Sin permisos.");
+        throw new Error("No tienes permisos para esta zona.");
 
       // Validar duplicado fecha/zona
       const check = await client.query(
         `SELECT id FROM jornadas WHERE zona_id=$1 AND fecha=$2`,
         [zona_id, fecha]
       );
-      if (check.rows.length > 0)
-        throw new Error("Ya existe una jornada para esta fecha y zona.");
+
+      // Si descomentas esto, bloquea 2 jornadas el mismo dia
+      // if (check.rows.length > 0) throw new Error("Ya existe una jornada para esta fecha.");
 
       const jRes = await client.query(
         `INSERT INTO jornadas (fecha, periodo_id, zona_id, created_by) VALUES ($1, $2, $3, $4) RETURNING id`,
@@ -121,7 +160,9 @@ router.post(
   }
 );
 
-// 4. EDITAR JORNADA (ESTRUCTURA: Promotores y Stands)
+// ==========================================
+// 4. EDITAR JORNADA
+// ==========================================
 router.put(
   "/:id",
   auth,
@@ -131,7 +172,8 @@ router.put(
     try {
       await client.query("BEGIN");
       const { id } = req.params;
-      const { fecha, asignaciones } = req.body; // asignaciones: [{promotor_id, stand_id}]
+      const { fecha, asignaciones } = req.body;
+      // asignaciones es array de: {promotor_id, stand_id}
 
       // 1. Actualizar fecha
       await client.query("UPDATE jornadas SET fecha = $1 WHERE id = $2", [
@@ -139,22 +181,21 @@ router.put(
         id,
       ]);
 
-      // 2. Sincronizar Promotores (Difícil: No borrar todo porque perdemos ventas)
-
-      // A. Obtener asignaciones actuales en BD
+      // 2. Obtener asignaciones actuales en BD para comparar
       const actualesRes = await client.query(
         "SELECT promotor_id, id FROM jornada_promotores WHERE jornada_id = $1",
         [id]
       );
+
+      // Mapa: promotor_id -> jornada_promotor_id
       const actualesMap = new Map(
         actualesRes.rows.map((r) => [r.promotor_id, r.id])
-      ); // Map: promotor_id -> jornada_promotor_id
-
+      );
       const nuevosPromotoresIds = new Set(
         asignaciones.map((a) => a.promotor_id)
       );
 
-      // B. BORRAR los que ya no están (Esto borra sus ventas en cascada)
+      // A. BORRAR los que se quitaron (Borra ventas en cascada)
       for (const [promotor_id, jp_id] of actualesMap) {
         if (!nuevosPromotoresIds.has(promotor_id)) {
           await client.query("DELETE FROM jornada_promotores WHERE id = $1", [
@@ -163,10 +204,10 @@ router.put(
         }
       }
 
-      // C. INSERTAR o ACTUALIZAR
+      // B. INSERTAR nuevos o ACTUALIZAR stands de los existentes
       for (const asign of asignaciones) {
         if (actualesMap.has(asign.promotor_id)) {
-          // Ya existe: Actualizamos Stand por si cambió
+          // Ya existe: Actualizamos Stand
           const jp_id = actualesMap.get(asign.promotor_id);
           await client.query(
             "UPDATE jornada_promotores SET stand_id = $1 WHERE id = $2",
@@ -182,7 +223,7 @@ router.put(
       }
 
       await client.query("COMMIT");
-      res.json({ message: "Jornada actualizada" });
+      res.json({ message: "Jornada actualizada correctamente" });
     } catch (e) {
       await client.query("ROLLBACK");
       res.status(500).json({ error: e.message });
@@ -192,7 +233,9 @@ router.put(
   }
 );
 
+// ==========================================
 // 5. CREAR VENTA
+// ==========================================
 router.post("/ventas", auth, async (req, res) => {
   const { jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha } =
     req.body;
@@ -201,13 +244,15 @@ router.post("/ventas", auth, async (req, res) => {
       `INSERT INTO ventas (jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha) VALUES ($1, $2, $3, $4, $5)`,
       [jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha]
     );
-    res.json({ message: "Registrada" });
+    res.json({ message: "Venta registrada" });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// 6. EDITAR VENTA (NUEVO)
+// ==========================================
+// 6. EDITAR VENTA
+// ==========================================
 router.put("/ventas/:id", auth, async (req, res) => {
   const { plan_id, forma_pago_id, monto, codigo_ficha } = req.body;
   try {
@@ -221,7 +266,9 @@ router.put("/ventas/:id", auth, async (req, res) => {
   }
 });
 
+// ==========================================
 // 7. BORRAR VENTA
+// ==========================================
 router.delete(
   "/ventas/:id",
   auth,
@@ -229,7 +276,7 @@ router.delete(
   async (req, res) => {
     try {
       await pool.query("DELETE FROM ventas WHERE id = $1", [req.params.id]);
-      res.json({ message: "Eliminada" });
+      res.json({ message: "Venta eliminada" });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
