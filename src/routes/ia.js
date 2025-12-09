@@ -3,15 +3,14 @@ const pool = require("../db");
 const auth = require("../middleware/auth");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// Verificación de seguridad
 if (!process.env.GEMINI_API_KEY) {
   console.error("ERROR FATAL: No se encontró GEMINI_API_KEY.");
 }
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// --- CAMBIO: Usamos la versión estable fija (menos propensa a sobrecarga 503) ---
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// --- VOLVEMOS AL MODELO 2.0 (El que tu cuenta sí tiene habilitado) ---
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 const DB_SCHEMA = `
 Tablas PostgreSQL:
@@ -66,8 +65,8 @@ router.post("/chat", auth, async (req, res) => {
             1. Solo código SQL puro. Sin markdown.
             2. Usa COALESCE(SUM(monto), 0) para sumas.
             3. Fecha de hoy: '${new Date().toISOString().split("T")[0]}'.
-            4. IMPORTANTE FECHAS: Si el usuario escribe una fecha en formato DD/MM/YYYY (ej: 27/11/2025), conviértela a formato ISO 'YYYY-MM-DD' (ej: '2025-11-27') en la consulta SQL.
-            5. Para filtrar ventas por fecha, usa la tabla 'jornadas': JOIN jornadas j ON ... WHERE j.fecha = 'AAAA-MM-DD'.
+            4. MANEJO DE FECHAS: Si el usuario escribe 'DD/MM/YYYY' (ej: 27/11/2025), conviértela a 'YYYY-MM-DD' (ej: '2025-11-27').
+            5. Para filtrar ventas por fecha: JOIN jornadas j ON ... WHERE j.fecha = 'AAAA-MM-DD'.
         `;
 
     if (rol === "Lider") {
@@ -77,7 +76,6 @@ router.post("/chat", auth, async (req, res) => {
     const resultSQL = await model.generateContent(promptSQL);
     let sqlQuery = resultSQL.response.text().trim();
 
-    // Limpieza
     sqlQuery = sqlQuery
       .replace(/```sql/g, "")
       .replace(/```/g, "")
@@ -95,12 +93,11 @@ router.post("/chat", auth, async (req, res) => {
       if (datos.rows.length > 0) {
         datosJson = JSON.stringify(datos.rows).substring(0, 4000);
       } else {
-        datosJson = "No se encontraron datos para esa fecha o criterio.";
+        datosJson = "No se encontraron datos para esa consulta.";
       }
     } catch (sqlErr) {
       console.error("Error SQL:", sqlErr.message);
-      // Le decimos a la IA que falló el SQL para que responda algo coherente
-      datosJson = "Error técnico al consultar la base de datos.";
+      datosJson = "Error técnico al ejecutar la consulta en base de datos.";
     }
 
     // --- PASO 3: Respuesta Humana ---
@@ -108,9 +105,7 @@ router.post("/chat", auth, async (req, res) => {
             PREGUNTA: "${pregunta}"
             RESULTADO DE LA BASE DE DATOS: ${datosJson}
             
-            INSTRUCCIÓN: Responde breve y profesionalmente. 
-            Si hay dinero usa formato $.
-            Si no hay datos, dilo amablemente.
+            INSTRUCCIÓN: Responde brevemente.
         `;
 
     const resultTexto = await model.generateContent(promptTexto);
@@ -118,10 +113,11 @@ router.post("/chat", auth, async (req, res) => {
   } catch (err) {
     console.error("Error IA:", err);
 
-    if (err.message.includes("503")) {
+    // Manejo específico del 429
+    if (err.message.includes("429") || err.status === 429) {
       return res.json({
         respuesta:
-          "⚠️ Los servidores de IA de Google están saturados en este momento. Intenta de nuevo en unos segundos.",
+          "⚠️ El sistema está recibiendo muchas consultas. Por favor espera 30 segundos y vuelve a intentar.",
       });
     }
 
