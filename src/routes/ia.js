@@ -9,6 +9,35 @@ if (!process.env.GEMINI_API_KEY) {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// --- ESTRATEGIA DE FALLBACK ROBUSTA (Tu lista preferida) ---
+async function generarConFallback(prompt) {
+  const modelos = [
+    "gemini-flash-latest", // 1. Alias dinámico (Prioridad)
+    "gemini-1.5-flash", // 2. Estable y rápido
+    "gemini-2.0-flash", // 3. Potente (si hay cuota)
+    "gemini-2.0-flash-exp", // 4. Experimental
+  ];
+
+  let lastError = null;
+
+  for (const modelName of modelos) {
+    try {
+      // console.log(`Intentando con modelo: ${modelName}`); // Descomentar para debug
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    } catch (err) {
+      console.warn(
+        `Fallo modelo ${modelName}: ${err.message.substring(0, 50)}...`
+      );
+      lastError = err;
+      // Si es error de seguridad, paramos. Si es 404/429/503, seguimos.
+      if (err.message.includes("SAFETY")) break;
+    }
+  }
+  throw lastError;
+}
+
 const DB_SCHEMA = `
 Tablas PostgreSQL:
 - zonas (id, nombre)
@@ -19,45 +48,14 @@ Tablas PostgreSQL:
 - periodos (id, nombre, zona_id, fecha_inicio, fecha_fin, estado)
 - jornadas (id, fecha, periodo_id, zona_id)
 - jornada_promotores (id, jornada_id, promotor_id, stand_id)
-- ventas (id, jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha)
+- ventas (id, jornada_promotor_id, plan_id, forma_pago_id, monto, created_at, codigo_ficha)
 - stands (id, nombre, zona_id, localidad_id)
 
-Relaciones:
-- ventas.jornada_promotor_id -> jornada_promotores.id
-- jornada_promotores.promotor_id -> promotores.id
-- jornada_promotores.jornada_id -> jornadas.id
-- jornadas.zona_id -> zonas.id
-- ventas.plan_id -> planes.id
-- ventas.forma_pago_id -> formas_pago.id
+Relaciones CLAVE:
+1. ventas -> jornada_promotores (jp) -> jornadas (j) -> zonas (z)
+2. ventas -> planes (p)
+3. ventas -> formas_pago (fp)
 `;
-
-// Función de Fallback Inteligente (Orden optimizado)
-async function generarConFallback(prompt) {
-  // Ponemos primero los modelos genéricos que suelen estar siempre disponibles
-  const modelos = [
-    "gemini-flash-latest", // Alias dinámico (Suele ser el más seguro)
-    "gemini-1.5-flash", // Estable anterior
-    "gemini-2.0-flash", // Nueva generación (A veces falla por cuota)
-    "gemini-2.5-flash", // Experimental
-  ];
-
-  let lastError = null;
-
-  for (const modelName of modelos) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      const result = await model.generateContent(prompt);
-      return result.response.text(); // ¡Éxito!
-    } catch (err) {
-      console.warn(
-        `Saltando modelo ${modelName}: ${err.message.substring(0, 50)}...`
-      );
-      lastError = err;
-      if (err.message.includes("SAFETY")) break;
-    }
-  }
-  throw lastError;
-}
 
 router.post("/chat", auth, async (req, res) => {
   const { pregunta, historial } = req.body;
@@ -66,48 +64,37 @@ router.post("/chat", auth, async (req, res) => {
   try {
     const contextText = historial
       ? historial
-          .slice(-6)
-          .map(
-            (m) => `${m.role === "user" ? "Usuario" : "Asistente"}: ${m.text}`
-          )
+          .slice(-8)
+          .map((m) => `${m.role.toUpperCase()}: ${m.text}`)
           .join("\n")
       : "";
 
     console.log("Pregunta:", pregunta);
 
-    // --- PASO 1: Generar SQL ---
+    // --- PASO 1: Generar SQL con Contexto ---
     let promptSQL = `
             ${DB_SCHEMA}
             
-            HISTORIAL:
+            HISTORIAL DE CONVERSACIÓN:
             ${contextText}
             
             PREGUNTA ACTUAL: "${pregunta}"
             
             TU TAREA: Genera una consulta SQL SELECT (PostgreSQL).
             
-            REGLAS OBLIGATORIAS:
-            1. Solo código SQL puro. Sin markdown.
-            2. Usa COALESCE(SUM(monto), 0) para sumas.
-            3. Fecha de hoy: '${new Date().toISOString().split("T")[0]}'.
+            REGLAS DE CONTEXTO:
+            1. Analiza el HISTORIAL. Si en la pregunta anterior se habló de una fecha específica, MANTÉN ESE FILTRO DE FECHA.
+            2. Si preguntan "¿A qué zona pertenece?" o "¿Qué plan?", asume que hablan de los registros filtrados anteriormente.
             
-            4. **CRÍTICO - FECHAS**:
-               Si el usuario pide ventas de una fecha específica (ej: 27/11/2025):
-               - DEBES hacer JOIN con la tabla 'jornadas'.
-               - DEBES filtrar por 'jornadas.fecha'.
-               - NO uses 'ventas.created_at' ni 'ventas.fecha'.
-               - Formato fecha SQL: 'YYYY-MM-DD'.
-
-               Ejemplo correcto:
-               SELECT SUM(v.monto) 
-               FROM ventas v
-               JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-               JOIN jornadas j ON jp.jornada_id = j.id
-               WHERE j.fecha = '2025-11-27';
+            REGLAS TÉCNICAS:
+            1. Solo código SQL puro. Sin markdown.
+            2. Fecha de hoy: '${new Date().toISOString().split("T")[0]}'.
+            3. Fechas: Convierte DD/MM/YYYY a YYYY-MM-DD.
+            4. Filtro fecha ventas: JOIN jornadas j ON ... WHERE j.fecha = 'AAAA-MM-DD'.
         `;
 
     if (rol === "Lider") {
-      promptSQL += `\nFILTRO OBLIGATORIO: Filtra por j.zona_id = '${zona_id}' haciendo los JOINs necesarios.`;
+      promptSQL += `\nFILTRO SEGURIDAD: j.zona_id = '${zona_id}'`;
     }
 
     let sqlQuery = await generarConFallback(promptSQL);
@@ -129,21 +116,26 @@ router.post("/chat", auth, async (req, res) => {
       if (datos.rows.length > 0) {
         datosJson = JSON.stringify(datos.rows).substring(0, 4000);
       } else {
-        // Si la consulta SQL funcionó pero trajo 0 filas
-        datosJson =
-          "Consulta exitosa pero sin registros encontrados (0 resultados).";
+        datosJson = "Consulta correcta pero sin resultados (0 filas).";
       }
     } catch (sqlErr) {
       console.error("Error SQL:", sqlErr.message);
-      datosJson = "Error de sintaxis en SQL generado.";
+      datosJson = "Error de sintaxis SQL.";
     }
 
     // --- PASO 3: Respuesta Humana ---
     const promptTexto = `
+            HISTORIAL:
+            ${contextText}
+
             PREGUNTA: "${pregunta}"
-            DATOS: ${datosJson}
-            INSTRUCCIÓN: Responde breve y profesionalmente. Usa formato $. 
-            Si los datos dicen "0 resultados", responde: "No encontré ventas registradas para esa fecha en el sistema."
+            
+            RESULTADO SQL: ${datosJson}
+            
+            INSTRUCCIÓN: Responde basándote en los datos. 
+            - Si hay lista, enumérala.
+            - Si preguntan "Qué zona" y el dato la tiene, dilo.
+            - Usa formato $.
         `;
 
     const respuestaFinal = await generarConFallback(promptTexto);
@@ -154,7 +146,9 @@ router.post("/chat", auth, async (req, res) => {
       err.message &&
       (err.message.includes("429") || err.message.includes("503"))
     ) {
-      return res.json({ respuesta: "⚠️ IA saturada. Espera 10 segundos." });
+      return res.json({
+        respuesta: "⚠️ IA saturada temporalmente. Espera unos segundos.",
+      });
     }
     res.status(500).json({ error: "Error en el asistente." });
   }
