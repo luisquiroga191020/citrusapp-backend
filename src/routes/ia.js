@@ -10,8 +10,8 @@ if (!process.env.GEMINI_API_KEY) {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// --- SOLUCIÓN: Usamos el alias genérico que tu cuenta SÍ tiene habilitado ---
-const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+// --- CAMBIO: Usamos la versión estable fija (menos propensa a sobrecarga 503) ---
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 const DB_SCHEMA = `
 Tablas PostgreSQL:
@@ -33,7 +33,6 @@ Relaciones:
 - jornadas.zona_id -> zonas.id
 - ventas.plan_id -> planes.id
 - ventas.forma_pago_id -> formas_pago.id
-- localidades.zona_id -> zonas.id
 `;
 
 router.post("/chat", auth, async (req, res) => {
@@ -56,7 +55,7 @@ router.post("/chat", auth, async (req, res) => {
     let promptSQL = `
             ${DB_SCHEMA}
             
-            HISTORIAL RECIENTE:
+            HISTORIAL:
             ${contextText}
             
             PREGUNTA ACTUAL: "${pregunta}"
@@ -67,11 +66,8 @@ router.post("/chat", auth, async (req, res) => {
             1. Solo código SQL puro. Sin markdown.
             2. Usa COALESCE(SUM(monto), 0) para sumas.
             3. Fecha de hoy: '${new Date().toISOString().split("T")[0]}'.
-            4. MANEJO DE FECHAS: Si el usuario escribe una fecha como 'DD/MM/YYYY' (ej: 27/12/2025), conviértela a formato ISO 'YYYY-MM-DD' (ej: '2025-12-27') en el WHERE.
-            5. Para filtrar por fecha de venta, usa la tabla 'jornadas' haciendo JOIN:
-               JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-               JOIN jornadas j ON jp.jornada_id = j.id
-               WHERE j.fecha = 'AAAA-MM-DD'
+            4. IMPORTANTE FECHAS: Si el usuario escribe una fecha en formato DD/MM/YYYY (ej: 27/11/2025), conviértela a formato ISO 'YYYY-MM-DD' (ej: '2025-11-27') en la consulta SQL.
+            5. Para filtrar ventas por fecha, usa la tabla 'jornadas': JOIN jornadas j ON ... WHERE j.fecha = 'AAAA-MM-DD'.
         `;
 
     if (rol === "Lider") {
@@ -99,22 +95,22 @@ router.post("/chat", auth, async (req, res) => {
       if (datos.rows.length > 0) {
         datosJson = JSON.stringify(datos.rows).substring(0, 4000);
       } else {
-        datosJson =
-          "Sin resultados. No hay ventas o datos registrados para esa fecha/criterio.";
+        datosJson = "No se encontraron datos para esa fecha o criterio.";
       }
     } catch (sqlErr) {
       console.error("Error SQL:", sqlErr.message);
-      datosJson = "Error ejecutando la consulta SQL generada por la IA.";
+      // Le decimos a la IA que falló el SQL para que responda algo coherente
+      datosJson = "Error técnico al consultar la base de datos.";
     }
 
     // --- PASO 3: Respuesta Humana ---
     const promptTexto = `
             PREGUNTA: "${pregunta}"
-            DATOS ENCONTRADOS (JSON): ${datosJson}
+            RESULTADO DE LA BASE DE DATOS: ${datosJson}
             
             INSTRUCCIÓN: Responde breve y profesionalmente. 
             Si hay dinero usa formato $.
-            Si los datos dicen "Sin resultados", dilo amablemente.
+            Si no hay datos, dilo amablemente.
         `;
 
     const resultTexto = await model.generateContent(promptTexto);
@@ -122,17 +118,10 @@ router.post("/chat", auth, async (req, res) => {
   } catch (err) {
     console.error("Error IA:", err);
 
-    if (err.message.includes("429") || err.status === 429) {
-      return res.json({
-        respuesta: "⚠️ Demasiadas preguntas rápidas. Espera 30 segundos.",
-      });
-    }
-
-    // Si sigue el error 404, probamos el último recurso (gemini-pro)
-    if (err.message.includes("404")) {
+    if (err.message.includes("503")) {
       return res.json({
         respuesta:
-          "⚠️ Error de modelo. Por favor avisa al administrador que cambie el modelo a 'gemini-pro'.",
+          "⚠️ Los servidores de IA de Google están saturados en este momento. Intenta de nuevo en unos segundos.",
       });
     }
 
