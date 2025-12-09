@@ -1,131 +1,289 @@
 const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const verifyRole = require("../middleware/roles");
 
-// Verificación de seguridad
-if (!process.env.GEMINI_API_KEY) {
-  console.error("ERROR FATAL: No se encontró GEMINI_API_KEY.");
-}
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// --- SOLUCIÓN: USAMOS LA VERSIÓN ESTABLE 1.5 ---
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-const DB_SCHEMA = `
-Tablas PostgreSQL:
-- zonas (id, nombre, color_identificador)
-- planes (id, nombre, servicio, tipo)
-- formas_pago (id, nombre, tipo)
-- usuarios (id, nombre_completo, rol, zona_id)
-- promotores (id, nombre_completo, codigo, zona_id, tipo_jornada, objetivo_base)
-- periodos (id, nombre, zona_id, fecha_inicio, fecha_fin, estado)
-- jornadas (id, fecha, periodo_id, zona_id)
-- jornada_promotores (id, jornada_id, promotor_id, stand_id)
-- ventas (id, jornada_promotor_id, plan_id, forma_pago_id, monto, created_at, codigo_ficha)
-- stands (id, nombre, zona_id, localidad_id)
-
-Relaciones:
-- ventas.jornada_promotor_id -> jornada_promotores.id
-- jornada_promotores.promotor_id -> promotores.id
-- jornada_promotores.jornada_id -> jornadas.id
-- jornadas.zona_id -> zonas.id
-- ventas.plan_id -> planes.id
-- ventas.forma_pago_id -> formas_pago.id
-`;
-
-router.post("/chat", auth, async (req, res) => {
-  const { pregunta, historial } = req.body;
-  const { rol, zona_id } = req.user;
-
+// ==========================================
+// 1. LISTAR JORNADAS
+// ==========================================
+router.get("/", auth, async (req, res) => {
   try {
-    // --- MEMORIA OPTIMIZADA ---
-    const contextText = historial
-      ? historial
-          .slice(-6)
-          .map(
-            (m) => `${m.role === "user" ? "Usuario" : "Asistente"}: ${m.text}`
-          )
-          .join("\n")
-      : "";
-
-    console.log("Pregunta:", pregunta);
-
-    // --- PASO 1: Generar SQL ---
-    let promptSQL = `
-            ${DB_SCHEMA}
-            
-            HISTORIAL RECIENTE:
-            ${contextText}
-            
-            PREGUNTA ACTUAL: "${pregunta}"
-            
-            TU TAREA: Genera una consulta SQL SELECT (PostgreSQL).
-            
-            REGLAS:
-            1. Solo código SQL puro. Sin markdown.
-            2. Usa COALESCE(SUM(monto), 0) para sumas.
-            3. Fecha de hoy: '${new Date().toISOString().split("T")[0]}'.
+    const { rol, zona_id } = req.user;
+    let query = `
+            SELECT 
+                j.id, 
+                j.fecha, 
+                j.created_at, 
+                z.nombre as zona_nombre, 
+                p.nombre as periodo_nombre,
+                u.nombre_completo as creador,
+                (SELECT COALESCE(SUM(v.monto), 0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as total_ventas,
+                (SELECT COUNT(*) FROM jornada_promotores jp WHERE jp.jornada_id = j.id) as promotores_activos,
+                (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as total_fichas
+            FROM jornadas j
+            JOIN zonas z ON j.zona_id = z.id
+            JOIN periodos p ON j.periodo_id = p.id
+            JOIN usuarios u ON j.created_by = u.id
         `;
+    const params = [];
 
+    // Si es Líder, solo ve su zona
     if (rol === "Lider") {
-      promptSQL += `\n4. FILTRO OBLIGATORIO: Filtra por zona_id = '${zona_id}' haciendo los JOINs necesarios.`;
+      query += " WHERE j.zona_id = $1";
+      params.push(zona_id);
     }
 
-    const resultSQL = await model.generateContent(promptSQL);
-    let sqlQuery = resultSQL.response.text().trim();
+    query += " ORDER BY j.fecha DESC";
 
-    sqlQuery = sqlQuery
-      .replace(/```sql/g, "")
-      .replace(/```/g, "")
-      .trim();
-    console.log("SQL Generado:", sqlQuery);
-
-    if (!sqlQuery.toUpperCase().startsWith("SELECT")) {
-      return res.json({ respuesta: sqlQuery });
-    }
-
-    // --- PASO 2: Ejecutar SQL ---
-    let datosJson = "[]";
-    try {
-      const datos = await pool.query(sqlQuery);
-      if (datos.rows.length > 0) {
-        datosJson = JSON.stringify(datos.rows).substring(0, 4000);
-      } else {
-        datosJson = "Sin resultados en la base de datos.";
-      }
-    } catch (sqlErr) {
-      console.error("Error SQL:", sqlErr.message);
-      datosJson = "Error ejecutando la consulta.";
-    }
-
-    // --- PASO 3: Respuesta Humana ---
-    const promptTexto = `
-            HISTORIAL:
-            ${contextText}
-
-            PREGUNTA: "${pregunta}"
-            
-            DATOS ENCONTRADOS (JSON): 
-            ${datosJson}
-            
-            INSTRUCCIÓN: Responde breve y profesionalmente. Si hay dinero usa formato $.
-        `;
-
-    const resultTexto = await model.generateContent(promptTexto);
-    res.json({ respuesta: resultTexto.response.text() });
+    const result = await pool.query(query, params);
+    res.json(result.rows);
   } catch (err) {
-    console.error("Error IA:", err);
-    // Manejo específico del error 429
-    if (err.message.includes("429") || err.status === 429) {
-      return res.json({
-        respuesta:
-          "⚠️ El sistema de IA está saturado en este momento. Por favor espera 30 segundos y vuelve a intentar.",
-      });
-    }
-    res.status(500).json({ error: "Error en el asistente inteligente." });
+    res.status(500).json({ error: err.message });
   }
 });
+
+// ==========================================
+// 2. DETALLE JORNADA
+// ==========================================
+router.get("/:id", auth, async (req, res) => {
+  try {
+    // 1. Cabecera
+    const cabecera = await pool.query(
+      `SELECT j.*, z.nombre as zona_nombre, p.nombre as periodo_nombre 
+       FROM jornadas j 
+       JOIN zonas z ON j.zona_id = z.id 
+       JOIN periodos p ON j.periodo_id = p.id 
+       WHERE j.id = $1`,
+      [req.params.id]
+    );
+
+    if (cabecera.rows.length === 0)
+      return res.status(404).json({ error: "No existe la jornada" });
+
+    // 2. Promotores (Equipo Activo)
+    const promotores = await pool.query(
+      `SELECT 
+            jp.id as jornada_promotor_id, 
+            jp.promotor_id, 
+            jp.stand_id, 
+            pr.nombre_completo, 
+            pr.foto_url, 
+            s.nombre as stand_nombre,
+            pp.tipo_jornada,
+            pp.objetivo as objetivo_mensual,
+            -- Totales calculados
+            (SELECT COALESCE(SUM(monto),0) FROM ventas v WHERE v.jornada_promotor_id = jp.id) as venta_hoy,
+            (SELECT COUNT(*)::int FROM ventas v WHERE v.jornada_promotor_id = jp.id) as fichas_hoy
+       FROM jornada_promotores jp
+       JOIN promotores pr ON jp.promotor_id = pr.id
+       LEFT JOIN stands s ON jp.stand_id = s.id
+       JOIN jornadas j ON jp.jornada_id = j.id
+       -- Join para obtener datos del periodo
+       JOIN periodo_promotores pp ON (pp.periodo_id = j.periodo_id AND pp.promotor_id = jp.promotor_id)
+       WHERE jp.jornada_id = $1 
+       ORDER BY pr.nombre_completo`,
+      [req.params.id]
+    );
+
+    // 3. Ventas (Detalle)
+    const ventas = await pool.query(
+      `SELECT 
+            v.*, 
+            pl.nombre as plan_nombre, 
+            fp.nombre as forma_pago, 
+            pr.nombre_completo as promotor, 
+            pr.id as promotor_id -- Necesario para el filtro en frontend
+       FROM ventas v
+       JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+       JOIN promotores pr ON jp.promotor_id = pr.id
+       JOIN planes pl ON v.plan_id = pl.id
+       JOIN formas_pago fp ON v.forma_pago_id = fp.id
+       WHERE jp.jornada_id = $1 
+       ORDER BY v.created_at DESC`,
+      [req.params.id]
+    );
+
+    res.json({
+      jornada: cabecera.rows[0],
+      promotores: promotores.rows,
+      ventas: ventas.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// 3. CREAR JORNADA
+// ==========================================
+router.post(
+  "/",
+  auth,
+  verifyRole(["Administrador", "Lider"]),
+  async (req, res) => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { fecha, periodo_id, zona_id, asignaciones } = req.body;
+
+      if (req.user.rol === "Lider" && req.user.zona_id !== zona_id)
+        throw new Error("No tienes permisos para esta zona.");
+
+      // Validar duplicado fecha/zona
+      const check = await client.query(
+        `SELECT id FROM jornadas WHERE zona_id=$1 AND fecha=$2`,
+        [zona_id, fecha]
+      );
+
+      if (check.rows.length > 0)
+        throw new Error("Ya existe una jornada para esta fecha en esta zona.");
+
+      const jRes = await client.query(
+        `INSERT INTO jornadas (fecha, periodo_id, zona_id, created_by) VALUES ($1, $2, $3, $4) RETURNING id`,
+        [fecha, periodo_id, zona_id, req.user.id]
+      );
+
+      for (const a of asignaciones) {
+        await client.query(
+          `INSERT INTO jornada_promotores (jornada_id, promotor_id, stand_id) VALUES ($1, $2, $3)`,
+          [jRes.rows[0].id, a.promotor_id, a.stand_id]
+        );
+      }
+      await client.query("COMMIT");
+      res.json({ id: jRes.rows[0].id });
+    } catch (e) {
+      await client.query("ROLLBACK");
+      res.status(500).json({ error: e.message });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ==========================================
+// 4. EDITAR JORNADA
+// ==========================================
+router.put(
+  "/:id",
+  auth,
+  verifyRole(["Administrador", "Lider"]),
+  async (req, res) => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { id } = req.params;
+      const { fecha, asignaciones } = req.body;
+      // asignaciones es array de: {promotor_id, stand_id}
+
+      // 1. Actualizar fecha
+      await client.query("UPDATE jornadas SET fecha = $1 WHERE id = $2", [
+        fecha,
+        id,
+      ]);
+
+      // 2. Sincronizar Promotores (Difícil: No borrar todo porque perdemos ventas)
+
+      // A. Obtener asignaciones actuales en BD
+      const actualesRes = await client.query(
+        "SELECT promotor_id, id FROM jornada_promotores WHERE jornada_id = $1",
+        [id]
+      );
+
+      // Mapa: promotor_id -> jornada_promotor_id
+      const actualesMap = new Map(
+        actualesRes.rows.map((r) => [r.promotor_id, r.id])
+      );
+
+      const nuevosPromotoresIds = new Set(
+        asignaciones.map((a) => a.promotor_id)
+      );
+
+      // B. BORRAR los que ya no están (Esto borra sus ventas en cascada)
+      for (const [promotor_id, jp_id] of actualesMap) {
+        if (!nuevosPromotoresIds.has(promotor_id)) {
+          await client.query("DELETE FROM jornada_promotores WHERE id = $1", [
+            jp_id,
+          ]);
+        }
+      }
+
+      // C. INSERTAR o ACTUALIZAR
+      for (const asign of asignaciones) {
+        if (actualesMap.has(asign.promotor_id)) {
+          // Ya existe: Actualizamos Stand por si cambió
+          const jp_id = actualesMap.get(asign.promotor_id);
+          await client.query(
+            "UPDATE jornada_promotores SET stand_id = $1 WHERE id = $2",
+            [asign.stand_id, jp_id]
+          );
+        } else {
+          // Nuevo: Insertamos
+          await client.query(
+            "INSERT INTO jornada_promotores (jornada_id, promotor_id, stand_id) VALUES ($1, $2, $3)",
+            [id, asign.promotor_id, asign.stand_id]
+          );
+        }
+      }
+
+      await client.query("COMMIT");
+      res.json({ message: "Jornada actualizada correctamente" });
+    } catch (e) {
+      await client.query("ROLLBACK");
+      res.status(500).json({ error: e.message });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ==========================================
+// 5. CREAR VENTA
+// ==========================================
+router.post("/ventas", auth, async (req, res) => {
+  const { jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha } =
+    req.body;
+  try {
+    await pool.query(
+      `INSERT INTO ventas (jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha) VALUES ($1, $2, $3, $4, $5)`,
+      [jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha]
+    );
+    res.json({ message: "Registrada" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==========================================
+// 6. EDITAR VENTA
+// ==========================================
+router.put("/ventas/:id", auth, async (req, res) => {
+  const { plan_id, forma_pago_id, monto, codigo_ficha } = req.body;
+  try {
+    await pool.query(
+      `UPDATE ventas SET plan_id=$1, forma_pago_id=$2, monto=$3, codigo_ficha=$4 WHERE id=$5`,
+      [plan_id, forma_pago_id, monto, codigo_ficha, req.params.id]
+    );
+    res.json({ message: "Venta actualizada" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==========================================
+// 7. BORRAR VENTA
+// ==========================================
+router.delete(
+  "/ventas/:id",
+  auth,
+  verifyRole(["Administrador", "Lider"]),
+  async (req, res) => {
+    try {
+      await pool.query("DELETE FROM ventas WHERE id = $1", [req.params.id]);
+      res.json({ message: "Eliminada" });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
 
 module.exports = router;

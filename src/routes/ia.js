@@ -10,8 +10,8 @@ if (!process.env.GEMINI_API_KEY) {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// --- MODELO CORRECTO PARA TU CUENTA ---
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+// --- CAMBIO OBLIGATORIO: Usamos 1.5 Flash para evitar error 429 ---
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 const DB_SCHEMA = `
 Tablas PostgreSQL:
@@ -41,7 +41,6 @@ router.post("/chat", auth, async (req, res) => {
 
   try {
     // --- MEMORIA OPTIMIZADA ---
-    // Tomamos solo los últimos 6 mensajes para dar contexto sin gastar tokens de más
     const contextText = historial
       ? historial
           .slice(-6)
@@ -68,16 +67,16 @@ router.post("/chat", auth, async (req, res) => {
             1. Solo código SQL puro. Sin markdown.
             2. Usa COALESCE(SUM(monto), 0) para sumas.
             3. Fecha de hoy: '${new Date().toISOString().split("T")[0]}'.
+            4. Si preguntan por fecha DD/MM/YYYY, conviértela a YYYY-MM-DD.
         `;
 
     if (rol === "Lider") {
-      promptSQL += `\n4. FILTRO OBLIGATORIO: Filtra por zona_id = '${zona_id}' haciendo los JOINs necesarios.`;
+      promptSQL += `\nFILTRO OBLIGATORIO: Filtra por zona_id = '${zona_id}' haciendo los JOINs necesarios.`;
     }
 
     const resultSQL = await model.generateContent(promptSQL);
     let sqlQuery = resultSQL.response.text().trim();
 
-    // Limpieza
     sqlQuery = sqlQuery
       .replace(/```sql/g, "")
       .replace(/```/g, "")
@@ -85,7 +84,6 @@ router.post("/chat", auth, async (req, res) => {
     console.log("SQL Generado:", sqlQuery);
 
     if (!sqlQuery.toUpperCase().startsWith("SELECT")) {
-      // Si la IA no generó SQL (ej: saludo), devolvemos su respuesta texto directo
       return res.json({ respuesta: sqlQuery });
     }
 
@@ -100,7 +98,7 @@ router.post("/chat", auth, async (req, res) => {
       }
     } catch (sqlErr) {
       console.error("Error SQL:", sqlErr.message);
-      datosJson = "Error ejecutando la consulta.";
+      datosJson = "Error ejecutando la consulta SQL generada.";
     }
 
     // --- PASO 3: Respuesta Humana ---
@@ -120,6 +118,15 @@ router.post("/chat", auth, async (req, res) => {
     res.json({ respuesta: resultTexto.response.text() });
   } catch (err) {
     console.error("Error IA:", err);
+
+    // Manejo específico del error 429 (Cuota excedida)
+    if (err.message.includes("429") || err.status === 429) {
+      return res.json({
+        respuesta:
+          "⚠️ Demasiadas preguntas seguidas. Por favor espera 30 segundos.",
+      });
+    }
+
     res.status(500).json({ error: "Error en el asistente inteligente." });
   }
 });
