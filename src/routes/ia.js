@@ -10,8 +10,8 @@ if (!process.env.GEMINI_API_KEY) {
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// --- CAMBIO OBLIGATORIO: Usamos 1.5 Flash para evitar error 429 ---
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// --- SOLUCIÓN: Usamos el alias genérico que tu cuenta SÍ tiene habilitado ---
+const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
 const DB_SCHEMA = `
 Tablas PostgreSQL:
@@ -33,6 +33,7 @@ Relaciones:
 - jornadas.zona_id -> zonas.id
 - ventas.plan_id -> planes.id
 - ventas.forma_pago_id -> formas_pago.id
+- localidades.zona_id -> zonas.id
 `;
 
 router.post("/chat", auth, async (req, res) => {
@@ -40,7 +41,6 @@ router.post("/chat", auth, async (req, res) => {
   const { rol, zona_id } = req.user;
 
   try {
-    // --- MEMORIA OPTIMIZADA ---
     const contextText = historial
       ? historial
           .slice(-6)
@@ -63,20 +63,25 @@ router.post("/chat", auth, async (req, res) => {
             
             TU TAREA: Genera una consulta SQL SELECT (PostgreSQL).
             
-            REGLAS:
+            REGLAS OBLIGATORIAS:
             1. Solo código SQL puro. Sin markdown.
             2. Usa COALESCE(SUM(monto), 0) para sumas.
             3. Fecha de hoy: '${new Date().toISOString().split("T")[0]}'.
-            4. Si preguntan por fecha DD/MM/YYYY, conviértela a YYYY-MM-DD.
+            4. MANEJO DE FECHAS: Si el usuario escribe una fecha como 'DD/MM/YYYY' (ej: 27/12/2025), conviértela a formato ISO 'YYYY-MM-DD' (ej: '2025-12-27') en el WHERE.
+            5. Para filtrar por fecha de venta, usa la tabla 'jornadas' haciendo JOIN:
+               JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+               JOIN jornadas j ON jp.jornada_id = j.id
+               WHERE j.fecha = 'AAAA-MM-DD'
         `;
 
     if (rol === "Lider") {
-      promptSQL += `\nFILTRO OBLIGATORIO: Filtra por zona_id = '${zona_id}' haciendo los JOINs necesarios.`;
+      promptSQL += `\n6. FILTRO OBLIGATORIO: Filtra por zona_id = '${zona_id}' haciendo los JOINs necesarios.`;
     }
 
     const resultSQL = await model.generateContent(promptSQL);
     let sqlQuery = resultSQL.response.text().trim();
 
+    // Limpieza
     sqlQuery = sqlQuery
       .replace(/```sql/g, "")
       .replace(/```/g, "")
@@ -94,24 +99,22 @@ router.post("/chat", auth, async (req, res) => {
       if (datos.rows.length > 0) {
         datosJson = JSON.stringify(datos.rows).substring(0, 4000);
       } else {
-        datosJson = "Sin resultados en la base de datos.";
+        datosJson =
+          "Sin resultados. No hay ventas o datos registrados para esa fecha/criterio.";
       }
     } catch (sqlErr) {
       console.error("Error SQL:", sqlErr.message);
-      datosJson = "Error ejecutando la consulta SQL generada.";
+      datosJson = "Error ejecutando la consulta SQL generada por la IA.";
     }
 
     // --- PASO 3: Respuesta Humana ---
     const promptTexto = `
-            HISTORIAL:
-            ${contextText}
-
             PREGUNTA: "${pregunta}"
+            DATOS ENCONTRADOS (JSON): ${datosJson}
             
-            DATOS ENCONTRADOS (JSON): 
-            ${datosJson}
-            
-            INSTRUCCIÓN: Responde breve y profesionalmente. Si hay dinero usa formato $.
+            INSTRUCCIÓN: Responde breve y profesionalmente. 
+            Si hay dinero usa formato $.
+            Si los datos dicen "Sin resultados", dilo amablemente.
         `;
 
     const resultTexto = await model.generateContent(promptTexto);
@@ -119,15 +122,21 @@ router.post("/chat", auth, async (req, res) => {
   } catch (err) {
     console.error("Error IA:", err);
 
-    // Manejo específico del error 429 (Cuota excedida)
     if (err.message.includes("429") || err.status === 429) {
       return res.json({
-        respuesta:
-          "⚠️ Demasiadas preguntas seguidas. Por favor espera 30 segundos.",
+        respuesta: "⚠️ Demasiadas preguntas rápidas. Espera 30 segundos.",
       });
     }
 
-    res.status(500).json({ error: "Error en el asistente inteligente." });
+    // Si sigue el error 404, probamos el último recurso (gemini-pro)
+    if (err.message.includes("404")) {
+      return res.json({
+        respuesta:
+          "⚠️ Error de modelo. Por favor avisa al administrador que cambie el modelo a 'gemini-pro'.",
+      });
+    }
+
+    res.status(500).json({ error: "Error interno del asistente." });
   }
 });
 
