@@ -31,32 +31,34 @@ Relaciones:
 - ventas.forma_pago_id -> formas_pago.id
 `;
 
-// Función auxiliar para probar modelos en cascada
+// Función de Fallback Inteligente basada en tu documentación
 async function generarConFallback(prompt) {
-  // Lista de modelos en orden de preferencia
+  // Lista de modelos ordenados por estabilidad y potencia según tu cuenta
   const modelos = [
-    "gemini-1.5-flash-latest",
-    "gemini-2.0-flash-exp",
-    "gemini-pro",
+    "gemini-2.0-flash", // Estable (Recomendado)
+    "gemini-2.0-flash-001", // Versión específica estable
+    "gemini-2.5-flash", // Nueva generación (Si está disponible)
+    "gemini-flash-latest", // Alias genérico (Último recurso)
   ];
 
   let lastError = null;
 
   for (const modelName of modelos) {
     try {
-      console.log(`Intentando con modelo: ${modelName}...`);
+      // console.log(`Intentando con modelo: ${modelName}...`); // Descomentar para debug
       const model = genAI.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(prompt);
       return result.response.text(); // ¡Éxito!
     } catch (err) {
-      console.warn(`Fallo modelo ${modelName}: ${err.message}`);
+      console.warn(
+        `Fallo modelo ${modelName}: ${err.message.substring(0, 100)}...`
+      );
       lastError = err;
-      // Si el error es por seguridad (safety settings), no reintentamos
+      // Si es un error de seguridad, no tiene sentido reintentar con otro modelo
       if (err.message.includes("SAFETY")) break;
-      // Si es 404, 429 o 503, continuamos con el siguiente modelo del bucle
     }
   }
-  throw lastError; // Si todos fallan, lanzamos el último error
+  throw lastError; // Si todos fallan
 }
 
 router.post("/chat", auth, async (req, res) => {
@@ -121,14 +123,14 @@ router.post("/chat", auth, async (req, res) => {
       }
     } catch (sqlErr) {
       console.error("Error SQL:", sqlErr.message);
-      datosJson = "Error en consulta SQL.";
+      datosJson = "Error en consulta SQL: " + sqlErr.message;
     }
 
     // --- PASO 3: Respuesta Humana ---
     const promptTexto = `
             PREGUNTA: "${pregunta}"
             DATOS: ${datosJson}
-            INSTRUCCIÓN: Responde breve y profesionalmente. Usa formato $.
+            INSTRUCCIÓN: Responde breve y profesionalmente en español. Usa formato $.
         `;
 
     const respuestaFinal = await generarConFallback(promptTexto);
@@ -136,14 +138,20 @@ router.post("/chat", auth, async (req, res) => {
   } catch (err) {
     console.error("Error IA Final:", err);
 
-    // Mensaje amigable si todo falla
+    // Mensaje amigable
     if (
       err.message &&
       (err.message.includes("429") || err.message.includes("503"))
     ) {
       return res.json({
         respuesta:
-          "⚠️ Todos los modelos de IA están ocupados. Por favor espera 1 minuto.",
+          "⚠️ El sistema de IA está saturado en este momento. Por favor espera 1 minuto.",
+      });
+    }
+    if (err.message && err.message.includes("404")) {
+      return res.json({
+        respuesta:
+          "⚠️ Error de configuración de modelos IA. Contacta a soporte.",
       });
     }
     res.status(500).json({ error: "Error en el asistente." });
