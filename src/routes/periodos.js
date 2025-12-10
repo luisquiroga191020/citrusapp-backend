@@ -83,7 +83,7 @@ router.get("/:id/dashboard", auth, async (req, res) => {
 });
 
 // ================================================================
-// DASHBOARD ANALÍTICO AVANZADO (Caja y Bigotes + Top 3 + Semanal)
+// DASHBOARD ANALÍTICO (Aquí faltaba la info de pagos)
 // ================================================================
 router.get("/:id/analytics", auth, async (req, res) => {
   const { id } = req.params;
@@ -97,17 +97,17 @@ router.get("/:id/analytics", auth, async (req, res) => {
       return res.status(404).json({ error: "Periodo no encontrado" });
     const periodo = periodoRes.rows[0];
 
-    // 2. KPIS GENERALES & COMPARATIVA
+    // 2. KPIS GENERALES + DESGLOSE PAGO (Calculados aquí)
     const totalesQuery = `
             SELECT 
                 COALESCE(SUM(v.monto), 0) as total_ventas,
                 COUNT(v.id) as total_fichas,
-                COUNT(DISTINCT v.jornada_promotor_id) as dias_hombre_trabajados, -- Cantidad de turnos reales que vendieron
+                COUNT(DISTINCT v.jornada_promotor_id) as dias_hombre_trabajados,
+                -- Desglose Efectivo vs Otros
                 COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo'), 0) as venta_efectivo,
                 COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo != 'Efectivo'), 0) as venta_debito,
-                -- Promedios
-                CASE WHEN COUNT(v.id) > 0 THEN SUM(v.monto) / COUNT(v.id) ELSE 0 END as ticket_promedio,
-                CASE WHEN COUNT(DISTINCT v.jornada_promotor_id) > 0 THEN SUM(v.monto) / COUNT(DISTINCT v.jornada_promotor_id) ELSE 0 END as venta_promedio_diaria_promotor
+                COUNT(v.id) FILTER (WHERE fp.tipo = 'Efectivo') as fichas_efectivo,
+                COUNT(v.id) FILTER (WHERE fp.tipo != 'Efectivo') as fichas_debito
             FROM ventas v
             JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
             JOIN jornadas j ON jp.jornada_id = j.id
@@ -116,13 +116,35 @@ router.get("/:id/analytics", auth, async (req, res) => {
         `;
     const totales = (await pool.query(totalesQuery, [id])).rows[0];
 
-    // 3. SEGMENTACIÓN & ESTADÍSTICA (CAJA Y BIGOTES)
-    // Calculamos cuartiles para Full Time vs Part Time
+    // 3. SEGMENTACIÓN FULL TIME / PART TIME
+    const segmentacionQuery = `
+            SELECT 
+                pp.tipo_jornada,
+                COUNT(DISTINCT pp.promotor_id) as cantidad_promotores,
+                COALESCE(SUM(v.monto), 0) as venta_total,
+                COUNT(v.id) as fichas_total
+            FROM periodo_promotores pp
+            LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id)
+            LEFT JOIN jornadas j ON (jp.jornada_id = j.id AND j.periodo_id = pp.periodo_id)
+            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+            WHERE pp.periodo_id = $1
+            GROUP BY pp.tipo_jornada
+        `;
+    const segmentacionRes = await pool.query(segmentacionQuery, [id]);
+
+    const segmentacion = {
+      full_time: segmentacionRes.rows.find(
+        (r) => r.tipo_jornada === "Full Time"
+      ) || { cantidad_promotores: 0, venta_total: 0, fichas_total: 0 },
+      part_time: segmentacionRes.rows.find(
+        (r) => r.tipo_jornada === "Part Time"
+      ) || { cantidad_promotores: 0, venta_total: 0, fichas_total: 0 },
+    };
+
+    // 4. ESTADÍSTICA (Caja y Bigotes)
     const estadisticaQuery = `
             WITH ventas_por_turno AS (
-                SELECT 
-                    pp.tipo_jornada,
-                    SUM(v.monto) as venta_turno -- Venta total de ese promotor en ese día
+                SELECT pp.tipo_jornada, SUM(v.monto) as venta_turno 
                 FROM ventas v
                 JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
                 JOIN jornadas j ON jp.jornada_id = j.id
@@ -131,23 +153,15 @@ router.get("/:id/analytics", auth, async (req, res) => {
                 GROUP BY pp.tipo_jornada, jp.id
             )
             SELECT 
-                tipo_jornada,
-                COUNT(*) as cantidad_turnos,
-                SUM(venta_turno) as venta_total,
-                MIN(venta_turno) as min,
+                tipo_jornada, MIN(venta_turno) as min, MAX(venta_turno) as max,
                 PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY venta_turno) as q1,
                 PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY venta_turno) as mediana,
-                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY venta_turno) as q3,
-                MAX(venta_turno) as max
-            FROM ventas_por_turno
-            GROUP BY tipo_jornada
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY venta_turno) as q3
+            FROM ventas_por_turno GROUP BY tipo_jornada
         `;
     const estadisticaRes = await pool.query(estadisticaQuery, [id]);
-
-    // Estructurar para el front
     const estadistica = {
       full: estadisticaRes.rows.find((r) => r.tipo_jornada === "Full Time") || {
-        venta_total: 0,
         min: 0,
         q1: 0,
         mediana: 0,
@@ -155,7 +169,6 @@ router.get("/:id/analytics", auth, async (req, res) => {
         max: 0,
       },
       part: estadisticaRes.rows.find((r) => r.tipo_jornada === "Part Time") || {
-        venta_total: 0,
         min: 0,
         q1: 0,
         mediana: 0,
@@ -164,74 +177,43 @@ router.get("/:id/analytics", auth, async (req, res) => {
       },
     };
 
-    // 4. ANÁLISIS SEMANAL (Día de la semana)
+    // 5. SEMANAL
     const semanalQuery = `
-            SELECT 
-                TO_CHAR(j.fecha, 'Day') as nombre_dia,
-                EXTRACT(ISODOW FROM j.fecha) as num_dia,
-                SUM(v.monto) as venta,
-                COUNT(v.id) as fichas
-            FROM ventas v
-            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-            JOIN jornadas j ON jp.jornada_id = j.id
-            WHERE j.periodo_id = $1
-            GROUP BY 1, 2
-            ORDER BY 2 ASC
+            SELECT TO_CHAR(j.fecha, 'Day') as nombre_dia, SUM(v.monto) as venta
+            FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id
+            WHERE j.periodo_id = $1 GROUP BY 1, EXTRACT(ISODOW FROM j.fecha) ORDER BY EXTRACT(ISODOW FROM j.fecha)
         `;
     const semanal = (await pool.query(semanalQuery, [id])).rows;
 
-    // 5. TOP 3 PLANES (Sin Iconos, solo data)
-    const topPlanes = await pool.query(
-      `
-            SELECT p.nombre, COUNT(*) as cantidad, SUM(v.monto) as monto 
-            FROM ventas v 
-            JOIN planes p ON v.plan_id = p.id 
-            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-            JOIN jornadas j ON jp.jornada_id = j.id
-            WHERE j.periodo_id = $1 
-            GROUP BY p.nombre ORDER BY cantidad DESC LIMIT 3
+    // 6. TOP PLANES
+    const topPlanes = (
+      await pool.query(
+        `SELECT p.nombre, COUNT(*) as cantidad, SUM(v.monto) as monto FROM ventas v JOIN planes p ON v.plan_id = p.id JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY p.nombre ORDER BY cantidad DESC LIMIT 3`,
+        [id]
+      )
+    ).rows;
+
+    // 7. PROMOTORES
+    const promotores = (
+      await pool.query(
+        `
+            SELECT pr.id, pr.nombre_completo, pr.foto_url, pp.tipo_jornada, pp.objetivo, COALESCE(SUM(v.monto), 0) as venta_real, COUNT(v.id) as cantidad_fichas, (COALESCE(SUM(v.monto), 0) - pp.objetivo) as delta, CASE WHEN pp.objetivo > 0 THEN (COALESCE(SUM(v.monto), 0) / pp.objetivo::float) * 100 ELSE 0 END as avance
+            FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id) LEFT JOIN jornadas j ON (jp.jornada_id = j.id AND j.periodo_id = pp.periodo_id) LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+            WHERE pp.periodo_id = $1 GROUP BY pr.id, pp.id ORDER BY venta_real DESC
         `,
-      [id]
-    );
+        [id]
+      )
+    ).rows;
 
-    // 6. LISTADO PROMOTORES (Performance)
-    const promotoresQuery = `
-            SELECT 
-                pr.nombre_completo, pr.foto_url,
-                pp.tipo_jornada, pp.objetivo,
-                COALESCE(SUM(v.monto), 0) as venta_real,
-                COUNT(v.id) as cantidad_fichas,
-                (COALESCE(SUM(v.monto), 0) - pp.objetivo) as delta,
-                CASE WHEN pp.objetivo > 0 THEN (COALESCE(SUM(v.monto), 0) / pp.objetivo::float) * 100 ELSE 0 END as avance
-            FROM periodo_promotores pp
-            JOIN promotores pr ON pp.promotor_id = pr.id
-            LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id)
-            LEFT JOIN jornadas j ON (jp.jornada_id = j.id AND j.periodo_id = pp.periodo_id)
-            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-            WHERE pp.periodo_id = $1
-            GROUP BY pr.id, pp.id
-            ORDER BY venta_real DESC
-        `;
-    const promotores = (await pool.query(promotoresQuery, [id])).rows;
-
-    // 7. COMPARATIVA PERIODO ANTERIOR
+    // 8. COMPARATIVA
     const prevPeriodo = await pool.query(
-      `
-            SELECT id, nombre FROM periodos 
-            WHERE zona_id = $1 AND fecha_inicio < $2 
-            ORDER BY fecha_inicio DESC LIMIT 1
-        `,
+      `SELECT id, nombre FROM periodos WHERE zona_id = $1 AND fecha_inicio < $2 ORDER BY fecha_inicio DESC LIMIT 1`,
       [periodo.zona_id, periodo.fecha_inicio]
     );
-
     let comparativa = { existe: false, diferencia: 0 };
     if (prevPeriodo.rows.length > 0) {
       const vPrev = await pool.query(
-        `
-                SELECT COALESCE(SUM(v.monto), 0) as total FROM ventas v 
-                JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-                JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1
-            `,
+        `SELECT COALESCE(SUM(v.monto), 0) as total FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1`,
         [prevPeriodo.rows[0].id]
       );
       const actual = Number(totales.total_ventas);
@@ -244,7 +226,8 @@ router.get("/:id/analytics", auth, async (req, res) => {
       };
     }
 
-    // --- RESPUESTA ---
+    // --- RESPUESTA JSON FINAL ---
+    // Aquí es donde agregamos el objeto "desglose_pago" que le faltaba al frontend
     const metaGlobal = promotores.reduce(
       (sum, p) => sum + Number(p.objetivo),
       0
@@ -257,16 +240,28 @@ router.get("/:id/analytics", auth, async (req, res) => {
     res.json({
       info: periodo,
       kpis: {
-        ...totales,
         meta_global: metaGlobal,
+        total_ventas: totales.total_ventas,
+        total_fichas: totales.total_fichas,
+        ticket_promedio: totales.ticket_promedio,
+        venta_promedio_diaria_promotor: totales.venta_promedio_diaria_promotor,
         avance_global:
           metaGlobal > 0 ? (totales.total_ventas / metaGlobal) * 100 : 0,
         dias_cargados: parseInt(diasCargados.rows[0].count),
         dias_operativos: periodo.dias_operativos,
       },
-      estadistica, // Datos para Caja y Bigotes
-      semanal, // Datos para gráfico barras
-      top_planes: topPlanes.rows,
+      // ESTO ES LO QUE FALTABA:
+      desglose_pago: {
+        efectivo: {
+          monto: totales.venta_efectivo,
+          fichas: totales.fichas_efectivo,
+        },
+        debito: { monto: totales.venta_debito, fichas: totales.fichas_debito },
+      },
+      segmentacion,
+      estadistica,
+      semanal,
+      top_planes: topPlanes,
       promotores,
       comparativa,
     });
