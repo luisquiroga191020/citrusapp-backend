@@ -82,6 +82,219 @@ router.get("/:id/dashboard", auth, async (req, res) => {
   }
 });
 
+// ================================================================
+// DASHBOARD ANALÍTICO COMPLETO DEL PERIODO
+// ================================================================
+router.get("/:id/analytics", auth, async (req, res) => {
+  const { id } = req.params;
+  try {
+    // 1. DATOS BÁSICOS DEL PERIODO
+    const periodoRes = await pool.query(
+      `
+            SELECT p.*, z.nombre as zona_nombre 
+            FROM periodos p 
+            JOIN zonas z ON p.zona_id = z.id 
+            WHERE p.id = $1`,
+      [id]
+    );
+
+    if (periodoRes.rows.length === 0)
+      return res.status(404).json({ error: "Periodo no encontrado" });
+    const periodo = periodoRes.rows[0];
+
+    // 2. TOTALES GENERALES (Ventas, Fichas, Tipos de Pago)
+    const totalesQuery = `
+            SELECT 
+                COALESCE(SUM(v.monto), 0) as total_ventas,
+                COUNT(v.id) as total_fichas,
+                -- Desglose Pago
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo'), 0) as venta_efectivo,
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo != 'Efectivo'), 0) as venta_debito,
+                COUNT(v.id) FILTER (WHERE fp.tipo = 'Efectivo') as fichas_efectivo,
+                COUNT(v.id) FILTER (WHERE fp.tipo != 'Efectivo') as fichas_debito
+            FROM ventas v
+            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+            JOIN jornadas j ON jp.jornada_id = j.id
+            JOIN formas_pago fp ON v.forma_pago_id = fp.id
+            WHERE j.periodo_id = $1
+        `;
+    const totales = (await pool.query(totalesQuery, [id])).rows[0];
+
+    // 3. SEGMENTACIÓN POR TIPO DE JORNADA (Full Time vs Part Time)
+    // Cruzamos con periodo_promotores para saber qué tipo tenía el promotor EN ESTE PERIODO
+    const segmentacionQuery = `
+            SELECT 
+                pp.tipo_jornada,
+                COUNT(DISTINCT pp.promotor_id) as cantidad_promotores,
+                COALESCE(SUM(v.monto), 0) as venta_total,
+                COUNT(v.id) as fichas_total
+            FROM periodo_promotores pp
+            LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id)
+            LEFT JOIN jornadas j ON (jp.jornada_id = j.id AND j.periodo_id = pp.periodo_id)
+            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+            WHERE pp.periodo_id = $1
+            GROUP BY pp.tipo_jornada
+        `;
+    const segmentacionRes = await pool.query(segmentacionQuery, [id]);
+
+    // Formatear segmentación para fácil uso en front
+    const segmentacion = {
+      full_time: segmentacionRes.rows.find(
+        (r) => r.tipo_jornada === "Full Time"
+      ) || { cantidad_promotores: 0, venta_total: 0, fichas_total: 0 },
+      part_time: segmentacionRes.rows.find(
+        (r) => r.tipo_jornada === "Part Time"
+      ) || { cantidad_promotores: 0, venta_total: 0, fichas_total: 0 },
+    };
+
+    // 4. LISTA DE PROMOTORES CON PERFORMANCE
+    const promotoresQuery = `
+            SELECT 
+                pr.nombre_completo, pr.foto_url, pr.codigo,
+                pp.tipo_jornada, pp.objetivo,
+                COALESCE(SUM(v.monto), 0) as venta_real,
+                COUNT(v.id) as cantidad_fichas,
+                (COALESCE(SUM(v.monto), 0) - pp.objetivo) as delta,
+                CASE WHEN pp.objetivo > 0 THEN (COALESCE(SUM(v.monto), 0) / pp.objetivo::float) * 100 ELSE 0 END as avance
+            FROM periodo_promotores pp
+            JOIN promotores pr ON pp.promotor_id = pr.id
+            LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id)
+            LEFT JOIN jornadas j ON (jp.jornada_id = j.id AND j.periodo_id = pp.periodo_id)
+            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+            WHERE pp.periodo_id = $1
+            GROUP BY pr.id, pp.id
+            ORDER BY venta_real DESC
+        `;
+    const promotores = (await pool.query(promotoresQuery, [id])).rows;
+
+    // 5. LISTADO DE JORNADAS DEL PERIODO
+    const jornadasQuery = `
+            SELECT j.*, u.nombre_completo as creador,
+            (SELECT COUNT(*) FROM jornada_promotores WHERE jornada_id = j.id) as asistencias,
+            (SELECT COALESCE(SUM(monto),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_dia
+            FROM jornadas j
+            JOIN usuarios u ON j.created_by = u.id
+            WHERE j.periodo_id = $1
+            ORDER BY j.fecha DESC
+        `;
+    const jornadas = (await pool.query(jornadasQuery, [id])).rows;
+
+    // 6. DATOS TOP (Plan y Pago más usados)
+    const topPlan = await pool.query(
+      `
+            SELECT p.nombre, COUNT(*) as cantidad 
+            FROM ventas v 
+            JOIN planes p ON v.plan_id = p.id 
+            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+            JOIN jornadas j ON jp.jornada_id = j.id
+            WHERE j.periodo_id = $1 
+            GROUP BY p.nombre ORDER BY cantidad DESC LIMIT 1
+        `,
+      [id]
+    );
+
+    const topPago = await pool.query(
+      `
+            SELECT fp.nombre, COUNT(*) as cantidad 
+            FROM ventas v 
+            JOIN formas_pago fp ON v.forma_pago_id = fp.id 
+            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+            JOIN jornadas j ON jp.jornada_id = j.id
+            WHERE j.periodo_id = $1 
+            GROUP BY fp.nombre ORDER BY cantidad DESC LIMIT 1
+        `,
+      [id]
+    );
+
+    // 7. COMPARATIVA CON PERIODO ANTERIOR (Misma zona)
+    const prevPeriodo = await pool.query(
+      `
+            SELECT id, nombre FROM periodos 
+            WHERE zona_id = $1 AND fecha_inicio < $2 
+            ORDER BY fecha_inicio DESC LIMIT 1
+        `,
+      [periodo.zona_id, periodo.fecha_inicio]
+    );
+
+    let comparativa = {
+      hay_previo: false,
+      venta_anterior: 0,
+      diff_porcentaje: 0,
+    };
+
+    if (prevPeriodo.rows.length > 0) {
+      const prevId = prevPeriodo.rows[0].id;
+      const ventaPrev = await pool.query(
+        `
+                SELECT COALESCE(SUM(v.monto), 0) as total 
+                FROM ventas v 
+                JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+                JOIN jornadas j ON jp.jornada_id = j.id
+                WHERE j.periodo_id = $1
+            `,
+        [prevId]
+      );
+
+      const totalPrev = Number(ventaPrev.rows[0].total);
+      const totalActual = Number(totales.total_ventas);
+
+      comparativa.hay_previo = true;
+      comparativa.nombre_anterior = prevPeriodo.rows[0].nombre;
+      comparativa.venta_anterior = totalPrev;
+      if (totalPrev > 0) {
+        comparativa.diff_porcentaje =
+          ((totalActual - totalPrev) / totalPrev) * 100;
+      } else {
+        comparativa.diff_porcentaje = 100;
+      }
+    }
+
+    // --- CONSTRUCCIÓN DEL OBJETO FINAL ---
+    const metaGlobal = promotores.reduce(
+      (sum, p) => sum + Number(p.objetivo),
+      0
+    );
+    const diasCargados = jornadas.length;
+    const promedioFicha =
+      totales.total_fichas > 0
+        ? Math.round(totales.total_ventas / totales.total_fichas)
+        : 0;
+
+    res.json({
+      info: periodo,
+      kpis: {
+        meta_global: metaGlobal,
+        total_ventas: totales.total_ventas,
+        total_fichas: totales.total_fichas,
+        promedio_ficha: promedioFicha,
+        avance_global:
+          metaGlobal > 0 ? (totales.total_ventas / metaGlobal) * 100 : 0,
+        dias_cargados: diasCargados,
+        dias_operativos: periodo.dias_operativos,
+        porcentaje_dias: (diasCargados / periodo.dias_operativos) * 100,
+      },
+      desglose_pago: {
+        efectivo: {
+          monto: totales.venta_efectivo,
+          fichas: totales.fichas_efectivo,
+        },
+        debito: { monto: totales.venta_debito, fichas: totales.fichas_debito },
+      },
+      segmentacion,
+      promotores,
+      jornadas,
+      tops: {
+        plan: topPlan.rows[0] || { nombre: "N/A", cantidad: 0 },
+        pago: topPago.rows[0] || { nombre: "N/A", cantidad: 0 },
+      },
+      comparativa,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 3. CREAR
 router.post(
   "/",
