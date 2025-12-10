@@ -83,35 +83,31 @@ router.get("/:id/dashboard", auth, async (req, res) => {
 });
 
 // ================================================================
-// DASHBOARD ANALÍTICO COMPLETO DEL PERIODO
+// DASHBOARD ANALÍTICO AVANZADO (Caja y Bigotes + Top 3 + Semanal)
 // ================================================================
 router.get("/:id/analytics", auth, async (req, res) => {
   const { id } = req.params;
   try {
-    // 1. DATOS BÁSICOS DEL PERIODO
+    // 1. INFO PERIODO
     const periodoRes = await pool.query(
-      `
-            SELECT p.*, z.nombre as zona_nombre 
-            FROM periodos p 
-            JOIN zonas z ON p.zona_id = z.id 
-            WHERE p.id = $1`,
+      `SELECT p.*, z.nombre as zona_nombre FROM periodos p JOIN zonas z ON p.zona_id = z.id WHERE p.id = $1`,
       [id]
     );
-
     if (periodoRes.rows.length === 0)
       return res.status(404).json({ error: "Periodo no encontrado" });
     const periodo = periodoRes.rows[0];
 
-    // 2. TOTALES GENERALES (Ventas, Fichas, Tipos de Pago)
+    // 2. KPIS GENERALES & COMPARATIVA
     const totalesQuery = `
             SELECT 
                 COALESCE(SUM(v.monto), 0) as total_ventas,
                 COUNT(v.id) as total_fichas,
-                -- Desglose Pago
+                COUNT(DISTINCT v.jornada_promotor_id) as dias_hombre_trabajados, -- Cantidad de turnos reales que vendieron
                 COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo'), 0) as venta_efectivo,
                 COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo != 'Efectivo'), 0) as venta_debito,
-                COUNT(v.id) FILTER (WHERE fp.tipo = 'Efectivo') as fichas_efectivo,
-                COUNT(v.id) FILTER (WHERE fp.tipo != 'Efectivo') as fichas_debito
+                -- Promedios
+                CASE WHEN COUNT(v.id) > 0 THEN SUM(v.monto) / COUNT(v.id) ELSE 0 END as ticket_promedio,
+                CASE WHEN COUNT(DISTINCT v.jornada_promotor_id) > 0 THEN SUM(v.monto) / COUNT(DISTINCT v.jornada_promotor_id) ELSE 0 END as venta_promedio_diaria_promotor
             FROM ventas v
             JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
             JOIN jornadas j ON jp.jornada_id = j.id
@@ -120,37 +116,88 @@ router.get("/:id/analytics", auth, async (req, res) => {
         `;
     const totales = (await pool.query(totalesQuery, [id])).rows[0];
 
-    // 3. SEGMENTACIÓN POR TIPO DE JORNADA (Full Time vs Part Time)
-    // Cruzamos con periodo_promotores para saber qué tipo tenía el promotor EN ESTE PERIODO
-    const segmentacionQuery = `
+    // 3. SEGMENTACIÓN & ESTADÍSTICA (CAJA Y BIGOTES)
+    // Calculamos cuartiles para Full Time vs Part Time
+    const estadisticaQuery = `
+            WITH ventas_por_turno AS (
+                SELECT 
+                    pp.tipo_jornada,
+                    SUM(v.monto) as venta_turno -- Venta total de ese promotor en ese día
+                FROM ventas v
+                JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+                JOIN jornadas j ON jp.jornada_id = j.id
+                JOIN periodo_promotores pp ON (pp.periodo_id = j.periodo_id AND pp.promotor_id = jp.promotor_id)
+                WHERE j.periodo_id = $1
+                GROUP BY pp.tipo_jornada, jp.id
+            )
             SELECT 
-                pp.tipo_jornada,
-                COUNT(DISTINCT pp.promotor_id) as cantidad_promotores,
-                COALESCE(SUM(v.monto), 0) as venta_total,
-                COUNT(v.id) as fichas_total
-            FROM periodo_promotores pp
-            LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id)
-            LEFT JOIN jornadas j ON (jp.jornada_id = j.id AND j.periodo_id = pp.periodo_id)
-            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-            WHERE pp.periodo_id = $1
-            GROUP BY pp.tipo_jornada
+                tipo_jornada,
+                COUNT(*) as cantidad_turnos,
+                SUM(venta_turno) as venta_total,
+                MIN(venta_turno) as min,
+                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY venta_turno) as q1,
+                PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY venta_turno) as mediana,
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY venta_turno) as q3,
+                MAX(venta_turno) as max
+            FROM ventas_por_turno
+            GROUP BY tipo_jornada
         `;
-    const segmentacionRes = await pool.query(segmentacionQuery, [id]);
+    const estadisticaRes = await pool.query(estadisticaQuery, [id]);
 
-    // Formatear segmentación para fácil uso en front
-    const segmentacion = {
-      full_time: segmentacionRes.rows.find(
-        (r) => r.tipo_jornada === "Full Time"
-      ) || { cantidad_promotores: 0, venta_total: 0, fichas_total: 0 },
-      part_time: segmentacionRes.rows.find(
-        (r) => r.tipo_jornada === "Part Time"
-      ) || { cantidad_promotores: 0, venta_total: 0, fichas_total: 0 },
+    // Estructurar para el front
+    const estadistica = {
+      full: estadisticaRes.rows.find((r) => r.tipo_jornada === "Full Time") || {
+        venta_total: 0,
+        min: 0,
+        q1: 0,
+        mediana: 0,
+        q3: 0,
+        max: 0,
+      },
+      part: estadisticaRes.rows.find((r) => r.tipo_jornada === "Part Time") || {
+        venta_total: 0,
+        min: 0,
+        q1: 0,
+        mediana: 0,
+        q3: 0,
+        max: 0,
+      },
     };
 
-    // 4. LISTA DE PROMOTORES CON PERFORMANCE
+    // 4. ANÁLISIS SEMANAL (Día de la semana)
+    const semanalQuery = `
+            SELECT 
+                TO_CHAR(j.fecha, 'Day') as nombre_dia,
+                EXTRACT(ISODOW FROM j.fecha) as num_dia,
+                SUM(v.monto) as venta,
+                COUNT(v.id) as fichas
+            FROM ventas v
+            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+            JOIN jornadas j ON jp.jornada_id = j.id
+            WHERE j.periodo_id = $1
+            GROUP BY 1, 2
+            ORDER BY 2 ASC
+        `;
+    const semanal = (await pool.query(semanalQuery, [id])).rows;
+
+    // 5. TOP 3 PLANES (Sin Iconos, solo data)
+    const topPlanes = await pool.query(
+      `
+            SELECT p.nombre, COUNT(*) as cantidad, SUM(v.monto) as monto 
+            FROM ventas v 
+            JOIN planes p ON v.plan_id = p.id 
+            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+            JOIN jornadas j ON jp.jornada_id = j.id
+            WHERE j.periodo_id = $1 
+            GROUP BY p.nombre ORDER BY cantidad DESC LIMIT 3
+        `,
+      [id]
+    );
+
+    // 6. LISTADO PROMOTORES (Performance)
     const promotoresQuery = `
             SELECT 
-                pr.nombre_completo, pr.foto_url, pr.codigo,
+                pr.nombre_completo, pr.foto_url,
                 pp.tipo_jornada, pp.objetivo,
                 COALESCE(SUM(v.monto), 0) as venta_real,
                 COUNT(v.id) as cantidad_fichas,
@@ -167,46 +214,7 @@ router.get("/:id/analytics", auth, async (req, res) => {
         `;
     const promotores = (await pool.query(promotoresQuery, [id])).rows;
 
-    // 5. LISTADO DE JORNADAS DEL PERIODO
-    const jornadasQuery = `
-            SELECT j.*, u.nombre_completo as creador,
-            (SELECT COUNT(*) FROM jornada_promotores WHERE jornada_id = j.id) as asistencias,
-            (SELECT COALESCE(SUM(monto),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_dia
-            FROM jornadas j
-            JOIN usuarios u ON j.created_by = u.id
-            WHERE j.periodo_id = $1
-            ORDER BY j.fecha DESC
-        `;
-    const jornadas = (await pool.query(jornadasQuery, [id])).rows;
-
-    // 6. DATOS TOP (Plan y Pago más usados)
-    const topPlan = await pool.query(
-      `
-            SELECT p.nombre, COUNT(*) as cantidad 
-            FROM ventas v 
-            JOIN planes p ON v.plan_id = p.id 
-            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-            JOIN jornadas j ON jp.jornada_id = j.id
-            WHERE j.periodo_id = $1 
-            GROUP BY p.nombre ORDER BY cantidad DESC LIMIT 1
-        `,
-      [id]
-    );
-
-    const topPago = await pool.query(
-      `
-            SELECT fp.nombre, COUNT(*) as cantidad 
-            FROM ventas v 
-            JOIN formas_pago fp ON v.forma_pago_id = fp.id 
-            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-            JOIN jornadas j ON jp.jornada_id = j.id
-            WHERE j.periodo_id = $1 
-            GROUP BY fp.nombre ORDER BY cantidad DESC LIMIT 1
-        `,
-      [id]
-    );
-
-    // 7. COMPARATIVA CON PERIODO ANTERIOR (Misma zona)
+    // 7. COMPARATIVA PERIODO ANTERIOR
     const prevPeriodo = await pool.query(
       `
             SELECT id, nombre FROM periodos 
@@ -216,77 +224,50 @@ router.get("/:id/analytics", auth, async (req, res) => {
       [periodo.zona_id, periodo.fecha_inicio]
     );
 
-    let comparativa = {
-      hay_previo: false,
-      venta_anterior: 0,
-      diff_porcentaje: 0,
-    };
-
+    let comparativa = { existe: false, diferencia: 0 };
     if (prevPeriodo.rows.length > 0) {
-      const prevId = prevPeriodo.rows[0].id;
-      const ventaPrev = await pool.query(
+      const vPrev = await pool.query(
         `
-                SELECT COALESCE(SUM(v.monto), 0) as total 
-                FROM ventas v 
+                SELECT COALESCE(SUM(v.monto), 0) as total FROM ventas v 
                 JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-                JOIN jornadas j ON jp.jornada_id = j.id
-                WHERE j.periodo_id = $1
+                JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1
             `,
-        [prevId]
+        [prevPeriodo.rows[0].id]
       );
-
-      const totalPrev = Number(ventaPrev.rows[0].total);
-      const totalActual = Number(totales.total_ventas);
-
-      comparativa.hay_previo = true;
-      comparativa.nombre_anterior = prevPeriodo.rows[0].nombre;
-      comparativa.venta_anterior = totalPrev;
-      if (totalPrev > 0) {
-        comparativa.diff_porcentaje =
-          ((totalActual - totalPrev) / totalPrev) * 100;
-      } else {
-        comparativa.diff_porcentaje = 100;
-      }
+      const actual = Number(totales.total_ventas);
+      const anterior = Number(vPrev.rows[0].total);
+      comparativa = {
+        existe: true,
+        nombre: prevPeriodo.rows[0].nombre,
+        anterior,
+        diferencia: anterior > 0 ? ((actual - anterior) / anterior) * 100 : 100,
+      };
     }
 
-    // --- CONSTRUCCIÓN DEL OBJETO FINAL ---
+    // --- RESPUESTA ---
     const metaGlobal = promotores.reduce(
       (sum, p) => sum + Number(p.objetivo),
       0
     );
-    const diasCargados = jornadas.length;
-    const promedioFicha =
-      totales.total_fichas > 0
-        ? Math.round(totales.total_ventas / totales.total_fichas)
-        : 0;
+    const diasCargados = await pool.query(
+      "SELECT COUNT(*) FROM jornadas WHERE periodo_id = $1",
+      [id]
+    );
 
     res.json({
       info: periodo,
       kpis: {
+        ...totales,
         meta_global: metaGlobal,
-        total_ventas: totales.total_ventas,
-        total_fichas: totales.total_fichas,
-        promedio_ficha: promedioFicha,
         avance_global:
           metaGlobal > 0 ? (totales.total_ventas / metaGlobal) * 100 : 0,
-        dias_cargados: diasCargados,
+        dias_cargados: parseInt(diasCargados.rows[0].count),
         dias_operativos: periodo.dias_operativos,
-        porcentaje_dias: (diasCargados / periodo.dias_operativos) * 100,
       },
-      desglose_pago: {
-        efectivo: {
-          monto: totales.venta_efectivo,
-          fichas: totales.fichas_efectivo,
-        },
-        debito: { monto: totales.venta_debito, fichas: totales.fichas_debito },
-      },
-      segmentacion,
+      estadistica, // Datos para Caja y Bigotes
+      semanal, // Datos para gráfico barras
+      top_planes: topPlanes.rows,
       promotores,
-      jornadas,
-      tops: {
-        plan: topPlan.rows[0] || { nombre: "N/A", cantidad: 0 },
-        pago: topPago.rows[0] || { nombre: "N/A", cantidad: 0 },
-      },
       comparativa,
     });
   } catch (err) {
