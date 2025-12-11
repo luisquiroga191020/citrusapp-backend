@@ -257,6 +257,20 @@ router.get("/:id/analytics", auth, async (req, res) => {
       };
     }
 
+            // H. NUEVO: VENTAS DIARIAS (Para gráfico de línea final)
+        const ventasDiariasQuery = `
+            SELECT 
+                TO_CHAR(j.fecha, 'YYYY-MM-DD') as fecha,
+                SUM(v.monto) as total
+            FROM ventas v
+            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+            JOIN jornadas j ON jp.jornada_id = j.id
+            WHERE j.periodo_id = $1
+            GROUP BY j.fecha
+            ORDER BY j.fecha ASC
+        `;
+        const ventasDiarias = (await pool.query(ventasDiariasQuery, [id])).rows;
+
     // --- RESPUESTA ---
     const metaGlobal = promotores.reduce(
       (sum, p) => sum + Number(p.objetivo),
@@ -295,6 +309,7 @@ router.get("/:id/analytics", auth, async (req, res) => {
         pago: topPago || { nombre: "Sin datos", cantidad: 0 },
       },
       semanal,
+      ventas_diarias: ventasDiarias,
       promotores,
       jornadas,
       comparativa,
