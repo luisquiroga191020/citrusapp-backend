@@ -8,33 +8,43 @@ function calculateMannWhitney(groupA, groupB) {
   const n1 = groupA.length;
   const n2 = groupB.length;
 
-  if (n1 === 0 || n2 === 0) return { u: 0, conclusion: "Datos insuficientes" };
+  if (n1 === 0 || n2 === 0)
+    return { u: 0, z: null, p_value: null, conclusion: "Datos insuficientes" };
 
+  // ... (Lógica de ranking igual que antes) ...
   const combined = [
     ...groupA.map((v) => ({ val: Number(v), group: "A" })),
     ...groupB.map((v) => ({ val: Number(v), group: "B" })),
   ].sort((a, b) => a.val - b.val);
-
   let rankSumA = 0;
   combined.forEach((item, index) => {
     if (item.group === "A") rankSumA += index + 1;
   });
-
   const u1 = n1 * n2 + (n1 * (n1 + 1)) / 2 - rankSumA;
   const u2 = n1 * n2 - u1;
   const u = Math.min(u1, u2);
 
   let conclusion = "Rendimiento similar (por hora)";
+  let p_value = null;
+  let z = null; // Variable para el Z-Score
+
   if (n1 > 5 && n2 > 5) {
     const mu = (n1 * n2) / 2;
     const sigma = Math.sqrt((n1 * n2 * (n1 + n2 + 1)) / 12);
-    const z = (u - mu) / sigma;
 
-    if (Math.abs(z) > 1.96)
+    // Calculamos Z
+    z = (u - mu) / sigma;
+
+    // Calculamos P
+    p_value = getPFromZ(z);
+
+    if (p_value < 0.05) {
       conclusion = "Diferencia SIGNIFICATIVA de Eficiencia";
+    }
   }
 
-  return { u, conclusion };
+  // Retornamos TODO: u, z, p_value y texto
+  return { u, z, p_value, conclusion };
 }
 
 // --- HELPER: Validar Periodo Activo Único ---
