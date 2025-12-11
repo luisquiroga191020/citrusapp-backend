@@ -98,10 +98,15 @@ router.get("/:id/analytics", auth, async (req, res) => {
                 COALESCE(SUM(v.monto), 0) as total_ventas,
                 COUNT(v.id) as total_fichas,
                 COUNT(DISTINCT v.jornada_promotor_id) as dias_hombre_trabajados,
+                -- Desglose
                 COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo'), 0) as venta_efectivo,
-                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo != 'Efectivo'), 0) as venta_debito,
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Débito'), 0) as venta_debito, -- Separado
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Crédito'), 0) as venta_credito, -- Separado
+                
                 COUNT(v.id) FILTER (WHERE fp.tipo = 'Efectivo') as fichas_efectivo,
-                COUNT(v.id) FILTER (WHERE fp.tipo != 'Efectivo') as fichas_debito,
+                COUNT(v.id) FILTER (WHERE fp.tipo = 'Débito') as fichas_debito,
+                COUNT(v.id) FILTER (WHERE fp.tipo = 'Crédito') as fichas_credito,
+
                 CASE WHEN COUNT(v.id) > 0 THEN SUM(v.monto) / COUNT(v.id) ELSE 0 END as ticket_promedio,
                 CASE WHEN COUNT(DISTINCT v.jornada_promotor_id) > 0 THEN SUM(v.monto) / COUNT(DISTINCT v.jornada_promotor_id) ELSE 0 END as venta_promedio_diaria_promotor
             FROM ventas v
@@ -257,8 +262,8 @@ router.get("/:id/analytics", auth, async (req, res) => {
       };
     }
 
-            // H. NUEVO: VENTAS DIARIAS (Para gráfico de línea final)
-        const ventasDiariasQuery = `
+    // H. NUEVO: VENTAS DIARIAS (Para gráfico de línea final)
+    const ventasDiariasQuery = `
             SELECT 
                 TO_CHAR(j.fecha, 'YYYY-MM-DD') as fecha,
                 SUM(v.monto) as total
@@ -269,7 +274,7 @@ router.get("/:id/analytics", auth, async (req, res) => {
             GROUP BY j.fecha
             ORDER BY j.fecha ASC
         `;
-        const ventasDiarias = (await pool.query(ventasDiariasQuery, [id])).rows;
+    const ventasDiarias = (await pool.query(ventasDiariasQuery, [id])).rows;
 
     // --- RESPUESTA ---
     const metaGlobal = promotores.reduce(
@@ -296,7 +301,11 @@ router.get("/:id/analytics", auth, async (req, res) => {
           monto: totales.venta_efectivo,
           fichas: totales.fichas_efectivo,
         },
-        debito: { monto: totales.venta_debito, fichas: totales.fichas_debito },
+        debito: { monto: totales.venta_debito, fichas: totales.fichas_debito }, // Nuevo
+        credito: {
+          monto: totales.venta_credito,
+          fichas: totales.fichas_credito,
+        }, 
       },
       estadistica: {
         full: fullStats,
