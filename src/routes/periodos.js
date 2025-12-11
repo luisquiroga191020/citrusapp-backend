@@ -4,14 +4,11 @@ const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/roles");
 
 // --- HELPER: Cálculo Estadístico Prueba U de Mann-Whitney ---
-// Compara si la diferencia entre dos grupos (Full Time vs Part Time) es significativa
 function calculateMannWhitney(groupA, groupB) {
-  // groupA y groupB son arrays de montos de venta diaria
   const n1 = groupA.length;
   const n2 = groupB.length;
 
-  if (n1 === 0 || n2 === 0)
-    return { u: 0, conclusion: "Datos insuficientes para análisis" };
+  if (n1 === 0 || n2 === 0) return { u: 0, conclusion: "Datos insuficientes" };
 
   // 1. Unir y Ranquear
   const combined = [
@@ -20,8 +17,6 @@ function calculateMannWhitney(groupA, groupB) {
   ].sort((a, b) => a.val - b.val);
 
   let rankSumA = 0;
-
-  // Asignar rangos (simplificado)
   combined.forEach((item, index) => {
     if (item.group === "A") rankSumA += index + 1;
   });
@@ -31,21 +26,18 @@ function calculateMannWhitney(groupA, groupB) {
   const u2 = n1 * n2 - u1;
   const u = Math.min(u1, u2);
 
-  // 3. Interpretación Estadística
-  let conclusion = "Diferencia no significativa";
+  // 3. Interpretación Estadística (Aprox Z-Score)
+  let conclusion = "Rendimiento similar (por hora)";
   if (n1 > 5 && n2 > 5) {
-    // Aproximación Normal (Z-Score)
     const mu = (n1 * n2) / 2;
     const sigma = Math.sqrt((n1 * n2 * (n1 + n2 + 1)) / 12);
     const z = (u - mu) / sigma;
 
-    // Nivel de confianza 95% (Z > 1.96)
     if (Math.abs(z) > 1.96)
-      conclusion = "Diferencia ESTADÍSTICAMENTE SIGNIFICATIVA (p < 0.05)";
-    else conclusion = "Rendimiento estadísticamente similar";
+      conclusion = "Diferencia SIGNIFICATIVA de Eficiencia";
   }
 
-  return { u, z_score: n1 > 5 && n2 > 5 ? u : null, conclusion };
+  return { u, conclusion };
 }
 
 // --- HELPER: Validar Periodo Activo ---
@@ -58,13 +50,11 @@ const checkPeriodoActivo = async (zona_id, excludeId = null) => {
   }
   const res = await pool.query(query, params);
   if (res.rows.length > 0)
-    throw new Error(
-      "Ya existe un periodo ACTIVO en esta zona. Debes desactivar el anterior primero."
-    );
+    throw new Error("Ya existe un periodo ACTIVO en esta zona.");
 };
 
 // ================================================================
-// 1. LISTAR PERIODOS (Vista Gestión)
+// 1. LISTAR PERIODOS
 // ================================================================
 router.get("/", auth, async (req, res) => {
   try {
@@ -108,12 +98,10 @@ router.get("/:id/analytics", auth, async (req, res) => {
                 COALESCE(SUM(v.monto), 0) as total_ventas,
                 COUNT(v.id) as total_fichas,
                 COUNT(DISTINCT v.jornada_promotor_id) as dias_hombre_trabajados,
-                -- Desglose Pago
                 COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo'), 0) as venta_efectivo,
                 COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo != 'Efectivo'), 0) as venta_debito,
                 COUNT(v.id) FILTER (WHERE fp.tipo = 'Efectivo') as fichas_efectivo,
                 COUNT(v.id) FILTER (WHERE fp.tipo != 'Efectivo') as fichas_debito,
-                -- Promedios
                 CASE WHEN COUNT(v.id) > 0 THEN SUM(v.monto) / COUNT(v.id) ELSE 0 END as ticket_promedio,
                 CASE WHEN COUNT(DISTINCT v.jornada_promotor_id) > 0 THEN SUM(v.monto) / COUNT(DISTINCT v.jornada_promotor_id) ELSE 0 END as venta_promedio_diaria_promotor
             FROM ventas v
@@ -124,12 +112,18 @@ router.get("/:id/analytics", auth, async (req, res) => {
         `;
     const totales = (await pool.query(totalesQuery, [id])).rows[0];
 
-    // C. SEGMENTACIÓN & ESTADÍSTICA (CAJA BIGOTES)
+    // C. SEGMENTACIÓN & ESTADÍSTICA (NORMALIZADA POR HORA)
     const statsQuery = `
             WITH ventas_por_turno AS (
                 SELECT 
                     pp.tipo_jornada,
-                    SUM(v.monto) as venta_diaria
+                    SUM(v.monto) as venta_diaria_total,
+                    -- Normalización: Dividir por horas típicas para comparar eficiencia
+                    CASE 
+                        WHEN pp.tipo_jornada = 'Full Time' THEN SUM(v.monto) / 9.0
+                        WHEN pp.tipo_jornada = 'Part Time' THEN SUM(v.monto) / 6.0
+                        ELSE SUM(v.monto) / 8.0 
+                    END as venta_hora
                 FROM ventas v
                 JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
                 JOIN jornadas j ON jp.jornada_id = j.id
@@ -140,24 +134,23 @@ router.get("/:id/analytics", auth, async (req, res) => {
             SELECT 
                 tipo_jornada,
                 COUNT(*) as n_muestras,
-                COALESCE(SUM(venta_diaria), 0) as venta_total,
-                COALESCE(AVG(venta_diaria), 0) as promedio,
-                COALESCE(MIN(venta_diaria), 0) as min,
-                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY venta_diaria) as q1,
-                PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY venta_diaria) as mediana,
-                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY venta_diaria) as q3,
-                COALESCE(MAX(venta_diaria), 0) as max,
-                json_agg(venta_diaria) as raw_data -- Para Mann-Whitney
+                SUM(venta_diaria_total) as venta_total_absoluta,
+                AVG(venta_hora) as promedio_hora,
+                MIN(venta_hora) as min,
+                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY venta_hora) as q1,
+                PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY venta_hora) as mediana,
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY venta_hora) as q3,
+                MAX(venta_hora) as max,
+                json_agg(venta_hora) as raw_data
             FROM ventas_por_turno
             GROUP BY tipo_jornada
         `;
     const statsRes = await pool.query(statsQuery, [id]);
 
-    // Asegurar objetos por si no hay datos
-    const emptyStats = {
-      venta_total: 0,
-      n_muestras: 0,
-      promedio: 0,
+    const fullStats = statsRes.rows.find(
+      (r) => r.tipo_jornada === "Full Time"
+    ) || {
+      venta_total_absoluta: 0,
       min: 0,
       q1: 0,
       mediana: 0,
@@ -165,25 +158,16 @@ router.get("/:id/analytics", auth, async (req, res) => {
       max: 0,
       raw_data: [],
     };
-    const fullStats = statsRes.rows.find(
-      (r) => r.tipo_jornada === "Full Time"
-    ) || { ...emptyStats };
     const partStats = statsRes.rows.find(
       (r) => r.tipo_jornada === "Part Time"
-    ) || { ...emptyStats };
-
-    // Objeto segmentación simple para gráficos
-    const segmentacion = {
-      full_time: {
-        venta_total: fullStats.venta_total,
-        cantidad_promotores: await getCountPromotores(id, "Full Time"), // Helper abajo
-        fichas_total: await getCountFichas(id, "Full Time"),
-      },
-      part_time: {
-        venta_total: partStats.venta_total,
-        cantidad_promotores: await getCountPromotores(id, "Part Time"),
-        fichas_total: await getCountFichas(id, "Part Time"),
-      },
+    ) || {
+      venta_total_absoluta: 0,
+      min: 0,
+      q1: 0,
+      mediana: 0,
+      q3: 0,
+      max: 0,
+      raw_data: [],
     };
 
     // Calcular Mann-Whitney
@@ -192,38 +176,45 @@ router.get("/:id/analytics", auth, async (req, res) => {
       partStats.raw_data || []
     );
 
+    // Segmentación simple para UI
+    const segmentacion = {
+      full_time: {
+        venta_total: fullStats.venta_total_absoluta,
+        cantidad_promotores: await getCountPromotores(id, "Full Time"),
+        fichas_total: await getCountFichas(id, "Full Time"),
+      },
+      part_time: {
+        venta_total: partStats.venta_total_absoluta,
+        cantidad_promotores: await getCountPromotores(id, "Part Time"),
+        fichas_total: await getCountFichas(id, "Part Time"),
+      },
+    };
+
     // D. HISTORIAL JORNADAS
     const jornadasQuery = `
             SELECT j.id, j.fecha, u.nombre_completo as creador,
             (SELECT COUNT(*) FROM jornada_promotores WHERE jornada_id = j.id) as asistencias,
             (SELECT COALESCE(SUM(monto),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_dia,
             (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as fichas_dia
-            FROM jornadas j
-            JOIN usuarios u ON j.created_by = u.id
-            WHERE j.periodo_id = $1
-            ORDER BY j.fecha DESC
+            FROM jornadas j JOIN usuarios u ON j.created_by = u.id WHERE j.periodo_id = $1 ORDER BY j.fecha DESC
         `;
     const jornadas = (await pool.query(jornadasQuery, [id])).rows;
 
-    // E. PROMOTORES & RANKING
-    const promotoresQuery = `
-            SELECT 
-                pr.id, pr.nombre_completo, pr.foto_url,
-                pp.tipo_jornada, pp.objetivo,
-                COALESCE(SUM(v.monto), 0) as venta_real,
-                COUNT(v.id) as cantidad_fichas,
-                (COALESCE(SUM(v.monto), 0) - pp.objetivo) as delta,
-                CASE WHEN pp.objetivo > 0 THEN (COALESCE(SUM(v.monto), 0) / pp.objetivo::float) * 100 ELSE 0 END as avance
-            FROM periodo_promotores pp
-            JOIN promotores pr ON pp.promotor_id = pr.id
-            LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id)
-            LEFT JOIN jornadas j ON (jp.jornada_id = j.id AND j.periodo_id = pp.periodo_id)
-            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-            WHERE pp.periodo_id = $1
-            GROUP BY pr.id, pp.id
-            ORDER BY venta_real DESC
-        `;
-    const promotores = (await pool.query(promotoresQuery, [id])).rows;
+    // E. PROMOTORES
+    const promotores = (
+      await pool.query(
+        `
+            SELECT pr.id, pr.nombre_completo, pr.foto_url, pp.tipo_jornada, pp.objetivo, 
+            COALESCE(SUM(v.monto), 0) as venta_real, COUNT(v.id) as cantidad_fichas,
+            (COALESCE(SUM(v.monto), 0) - pp.objetivo) as delta, 
+            CASE WHEN pp.objetivo > 0 THEN (COALESCE(SUM(v.monto), 0) / pp.objetivo::float) * 100 ELSE 0 END as avance
+            FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id 
+            LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id) LEFT JOIN jornadas j ON (jp.jornada_id = j.id AND j.periodo_id = pp.periodo_id) LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+            WHERE pp.periodo_id = $1 GROUP BY pr.id, pp.id ORDER BY venta_real DESC
+        `,
+        [id]
+      )
+    ).rows;
 
     // F. TOPS & SEMANAL
     const topPlan = (
@@ -266,10 +257,14 @@ router.get("/:id/analytics", auth, async (req, res) => {
       };
     }
 
-    // --- CONSTRUIR RESPUESTA ---
+    // --- RESPUESTA ---
     const metaGlobal = promotores.reduce(
       (sum, p) => sum + Number(p.objetivo),
       0
+    );
+    const diasCargados = await pool.query(
+      "SELECT COUNT(*) FROM jornadas WHERE periodo_id = $1",
+      [id]
     );
 
     res.json({
@@ -279,7 +274,7 @@ router.get("/:id/analytics", auth, async (req, res) => {
         meta_global: metaGlobal,
         avance_global:
           metaGlobal > 0 ? (totales.total_ventas / metaGlobal) * 100 : 0,
-        dias_cargados: parseInt(jornadas.length),
+        dias_cargados: parseInt(diasCargados.rows[0].count),
         dias_operativos: periodo.dias_operativos,
       },
       desglose_pago: {
@@ -310,7 +305,7 @@ router.get("/:id/analytics", auth, async (req, res) => {
   }
 });
 
-// Helpers simples para conteos específicos en segmentación
+// Helpers
 async function getCountPromotores(periodoId, tipo) {
   const res = await pool.query(
     "SELECT COUNT(*) FROM periodo_promotores WHERE periodo_id = $1 AND tipo_jornada = $2",
@@ -320,20 +315,13 @@ async function getCountPromotores(periodoId, tipo) {
 }
 async function getCountFichas(periodoId, tipo) {
   const res = await pool.query(
-    `
-        SELECT COUNT(v.id) FROM ventas v 
-        JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-        JOIN periodo_promotores pp ON (pp.promotor_id = jp.promotor_id AND pp.periodo_id = $1)
-        WHERE pp.tipo_jornada = $2
-    `,
+    `SELECT COUNT(v.id) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN periodo_promotores pp ON (pp.promotor_id = jp.promotor_id AND pp.periodo_id = $1) WHERE pp.tipo_jornada = $2`,
     [periodoId, tipo]
   );
   return parseInt(res.rows[0].count);
 }
 
-// ================================================================
-// 3. OBTENER UN PERIODO POR ID (Para editar)
-// ================================================================
+// 3. OBTENER UN PERIODO (Edición)
 router.get("/:id", auth, async (req, res) => {
   try {
     const pRes = await pool.query("SELECT * FROM periodos WHERE id = $1", [
@@ -342,10 +330,7 @@ router.get("/:id", auth, async (req, res) => {
     if (pRes.rows.length === 0)
       return res.status(404).json({ error: "No existe" });
     const promRes = await pool.query(
-      `
-            SELECT pp.promotor_id as id, pp.tipo_jornada, pp.objetivo, pr.nombre_completo 
-            FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id 
-            WHERE pp.periodo_id = $1`,
+      `SELECT pp.promotor_id as id, pp.tipo_jornada, pp.objetivo, pr.nombre_completo FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id WHERE pp.periodo_id = $1`,
       [req.params.id]
     );
     res.json({ ...pRes.rows[0], promotores: promRes.rows });
@@ -354,9 +339,7 @@ router.get("/:id", auth, async (req, res) => {
   }
 });
 
-// ================================================================
-// 4. GET ACTIVO (Para Jornadas)
-// ================================================================
+// 4. GET ACTIVO
 router.get("/activo/:zona_id", auth, async (req, res) => {
   try {
     const result = await pool.query(
@@ -364,25 +347,18 @@ router.get("/activo/:zona_id", auth, async (req, res) => {
       [req.params.zona_id]
     );
     if (result.rows.length === 0) return res.json(null);
-
     const p = result.rows[0];
     const promRes = await pool.query(
-      `
-            SELECT pp.promotor_id, pp.tipo_jornada, pp.objetivo, pr.nombre_completo, pr.codigo, pr.foto_url
-            FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id 
-            WHERE pp.periodo_id = $1 ORDER BY pr.nombre_completo`,
+      `SELECT pp.promotor_id, pp.tipo_jornada, pp.objetivo, pr.nombre_completo, pr.codigo, pr.foto_url FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id WHERE pp.periodo_id = $1 ORDER BY pr.nombre_completo`,
       [p.id]
     );
-
     res.json({ ...p, promotores: promRes.rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ================================================================
-// 5. CREAR (POST)
-// ================================================================
+// 5. CREAR
 router.post(
   "/",
   auth,
@@ -400,18 +376,14 @@ router.post(
         estado,
         promotores,
       } = req.body;
-
       if (req.user.rol === "Lider" && req.user.zona_id !== zona_id)
         throw new Error("Sin permisos.");
       if (estado === "Activo") await checkPeriodoActivo(zona_id);
-
       const periodRes = await client.query(
-        `INSERT INTO periodos (nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado) 
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        `INSERT INTO periodos (nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
         [nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado]
       );
       const pid = periodRes.rows[0].id;
-
       if (promotores) {
         for (const p of promotores) {
           await client.query(
@@ -431,9 +403,7 @@ router.post(
   }
 );
 
-// ================================================================
-// 6. EDITAR (PUT)
-// ================================================================
+// 6. EDITAR
 router.put(
   "/:id",
   auth,
@@ -451,9 +421,7 @@ router.put(
         estado,
         promotores,
       } = req.body;
-
       if (estado === "Activo") await checkPeriodoActivo(zona_id, req.params.id);
-
       await client.query(
         `UPDATE periodos SET nombre=$1, zona_id=$2, fecha_inicio=$3, fecha_fin=$4, dias_operativos=$5, estado=$6 WHERE id=$7`,
         [
@@ -466,7 +434,6 @@ router.put(
           req.params.id,
         ]
       );
-
       await client.query(
         "DELETE FROM periodo_promotores WHERE periodo_id = $1",
         [req.params.id]
@@ -490,9 +457,7 @@ router.put(
   }
 );
 
-// ================================================================
-// 7. ELIMINAR (DELETE)
-// ================================================================
+// 7. ELIMINAR
 router.delete(
   "/:id",
   auth,
