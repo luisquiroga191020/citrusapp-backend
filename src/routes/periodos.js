@@ -10,7 +10,6 @@ function calculateMannWhitney(groupA, groupB) {
 
   if (n1 === 0 || n2 === 0) return { u: 0, conclusion: "Datos insuficientes" };
 
-  // 1. Unir y Ranquear
   const combined = [
     ...groupA.map((v) => ({ val: Number(v), group: "A" })),
     ...groupB.map((v) => ({ val: Number(v), group: "B" })),
@@ -21,12 +20,10 @@ function calculateMannWhitney(groupA, groupB) {
     if (item.group === "A") rankSumA += index + 1;
   });
 
-  // 2. Calcular U
   const u1 = n1 * n2 + (n1 * (n1 + 1)) / 2 - rankSumA;
   const u2 = n1 * n2 - u1;
   const u = Math.min(u1, u2);
 
-  // 3. Interpretación Estadística (Aprox Z-Score)
   let conclusion = "Rendimiento similar (por hora)";
   if (n1 > 5 && n2 > 5) {
     const mu = (n1 * n2) / 2;
@@ -40,7 +37,7 @@ function calculateMannWhitney(groupA, groupB) {
   return { u, conclusion };
 }
 
-// --- HELPER: Validar Periodo Activo ---
+// --- HELPER: Validar Periodo Activo Único ---
 const checkPeriodoActivo = async (zona_id, excludeId = null) => {
   let query = `SELECT id FROM periodos WHERE zona_id = $1 AND estado = 'Activo'`;
   const params = [zona_id];
@@ -50,7 +47,9 @@ const checkPeriodoActivo = async (zona_id, excludeId = null) => {
   }
   const res = await pool.query(query, params);
   if (res.rows.length > 0)
-    throw new Error("Ya existe un periodo ACTIVO en esta zona.");
+    throw new Error(
+      "Ya existe un periodo ACTIVO en esta zona. Debes desactivar el anterior primero."
+    );
 };
 
 // ================================================================
@@ -92,21 +91,24 @@ router.get("/:id/analytics", auth, async (req, res) => {
       return res.status(404).json({ error: "Periodo no encontrado" });
     const periodo = periodoRes.rows[0];
 
-    // B. KPIS GENERALES + DESGLOSE PAGO
+    // B. KPIS GENERALES + DESGLOSE PAGO (Actualizado con Débito/Crédito separados)
     const totalesQuery = `
             SELECT 
                 COALESCE(SUM(v.monto), 0) as total_ventas,
                 COUNT(v.id) as total_fichas,
                 COUNT(DISTINCT v.jornada_promotor_id) as dias_hombre_trabajados,
-                -- Desglose
-                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo'), 0) as venta_efectivo,
-                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Débito'), 0) as venta_debito, -- Separado
-                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Crédito'), 0) as venta_credito, -- Separado
                 
+                -- Desglose Montos
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo'), 0) as venta_efectivo,
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Débito'), 0) as venta_debito,
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Crédito'), 0) as venta_credito,
+                
+                -- Desglose Fichas
                 COUNT(v.id) FILTER (WHERE fp.tipo = 'Efectivo') as fichas_efectivo,
                 COUNT(v.id) FILTER (WHERE fp.tipo = 'Débito') as fichas_debito,
                 COUNT(v.id) FILTER (WHERE fp.tipo = 'Crédito') as fichas_credito,
 
+                -- Promedios
                 CASE WHEN COUNT(v.id) > 0 THEN SUM(v.monto) / COUNT(v.id) ELSE 0 END as ticket_promedio,
                 CASE WHEN COUNT(DISTINCT v.jornada_promotor_id) > 0 THEN SUM(v.monto) / COUNT(DISTINCT v.jornada_promotor_id) ELSE 0 END as venta_promedio_diaria_promotor
             FROM ventas v
@@ -139,13 +141,13 @@ router.get("/:id/analytics", auth, async (req, res) => {
             SELECT 
                 tipo_jornada,
                 COUNT(*) as n_muestras,
-                SUM(venta_diaria_total) as venta_total_absoluta,
-                AVG(venta_hora) as promedio_hora,
-                MIN(venta_hora) as min,
+                COALESCE(SUM(venta_diaria_total), 0) as venta_total_absoluta,
+                COALESCE(AVG(venta_hora), 0) as promedio_hora,
+                COALESCE(MIN(venta_hora), 0) as min,
                 PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY venta_hora) as q1,
                 PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY venta_hora) as mediana,
                 PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY venta_hora) as q3,
-                MAX(venta_hora) as max,
+                COALESCE(MAX(venta_hora), 0) as max,
                 json_agg(venta_hora) as raw_data
             FROM ventas_por_turno
             GROUP BY tipo_jornada
@@ -175,13 +177,13 @@ router.get("/:id/analytics", auth, async (req, res) => {
       raw_data: [],
     };
 
-    // Calcular Mann-Whitney
+    // Mann-Whitney
     const mannWhitney = calculateMannWhitney(
       fullStats.raw_data || [],
       partStats.raw_data || []
     );
 
-    // Segmentación simple para UI
+    // Objeto Segmentación para UI
     const segmentacion = {
       full_time: {
         venta_total: fullStats.venta_total_absoluta,
@@ -195,17 +197,37 @@ router.get("/:id/analytics", auth, async (req, res) => {
       },
     };
 
-    // D. HISTORIAL JORNADAS
-    const jornadasQuery = `
-            SELECT j.id, j.fecha, u.nombre_completo as creador,
-            (SELECT COUNT(*) FROM jornada_promotores WHERE jornada_id = j.id) as asistencias,
-            (SELECT COALESCE(SUM(monto),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_dia,
-            (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as fichas_dia
-            FROM jornadas j JOIN usuarios u ON j.created_by = u.id WHERE j.periodo_id = $1 ORDER BY j.fecha DESC
+    // D. EVOLUCIÓN SEMANAL (Con Fichas)
+    const semanalQuery = `
+            SELECT 
+                TO_CHAR(j.fecha, 'Day') as nombre_dia, 
+                COALESCE(SUM(v.monto), 0) as venta,
+                COUNT(v.id) as fichas
+            FROM ventas v 
+            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id 
+            JOIN jornadas j ON jp.jornada_id = j.id 
+            WHERE j.periodo_id = $1 
+            GROUP BY 1, EXTRACT(ISODOW FROM j.fecha) 
+            ORDER BY EXTRACT(ISODOW FROM j.fecha)
         `;
-    const jornadas = (await pool.query(jornadasQuery, [id])).rows;
+    const semanal = (await pool.query(semanalQuery, [id])).rows;
 
-    // E. PROMOTORES
+    // E. EVOLUCIÓN DIARIA (Con Fichas)
+    const diarioQuery = `
+            SELECT 
+                TO_CHAR(j.fecha, 'YYYY-MM-DD') as fecha,
+                COALESCE(SUM(v.monto), 0) as total,
+                COUNT(v.id) as fichas
+            FROM ventas v
+            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+            JOIN jornadas j ON jp.jornada_id = j.id
+            WHERE j.periodo_id = $1
+            GROUP BY j.fecha
+            ORDER BY j.fecha ASC
+        `;
+    const ventasDiarias = (await pool.query(diarioQuery, [id])).rows;
+
+    // F. TOPS & RANKING
     const promotores = (
       await pool.query(
         `
@@ -221,7 +243,6 @@ router.get("/:id/analytics", auth, async (req, res) => {
       )
     ).rows;
 
-    // F. TOPS & SEMANAL
     const topPlan = (
       await pool.query(
         `SELECT p.nombre, COUNT(*) as cantidad, SUM(v.monto) as monto FROM ventas v JOIN planes p ON v.plan_id = p.id JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY p.nombre ORDER BY cantidad DESC LIMIT 1`,
@@ -234,12 +255,6 @@ router.get("/:id/analytics", auth, async (req, res) => {
         [id]
       )
     ).rows[0];
-    const semanal = (
-      await pool.query(
-        `SELECT TO_CHAR(j.fecha, 'Day') as nombre_dia, SUM(v.monto) as venta FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY 1, EXTRACT(ISODOW FROM j.fecha) ORDER BY EXTRACT(ISODOW FROM j.fecha)`,
-        [id]
-      )
-    ).rows;
 
     // G. COMPARATIVA ANTERIOR
     const prevPeriodo = await pool.query(
@@ -262,29 +277,26 @@ router.get("/:id/analytics", auth, async (req, res) => {
       };
     }
 
-    // H. NUEVO: VENTAS DIARIAS (Para gráfico de línea final)
-    const ventasDiariasQuery = `
-            SELECT 
-                TO_CHAR(j.fecha, 'YYYY-MM-DD') as fecha,
-                SUM(v.monto) as total
-            FROM ventas v
-            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-            JOIN jornadas j ON jp.jornada_id = j.id
-            WHERE j.periodo_id = $1
-            GROUP BY j.fecha
-            ORDER BY j.fecha ASC
-        `;
-    const ventasDiarias = (await pool.query(ventasDiariasQuery, [id])).rows;
+    // H. HISTORIAL JORNADAS
+    const jornadas = (
+      await pool.query(
+        `
+            SELECT j.id, j.fecha, u.nombre_completo as creador,
+            (SELECT COUNT(*) FROM jornada_promotores WHERE jornada_id = j.id) as asistencias,
+            (SELECT COALESCE(SUM(monto),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_dia,
+            (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as fichas_dia
+            FROM jornadas j JOIN usuarios u ON j.created_by = u.id WHERE j.periodo_id = $1 ORDER BY j.fecha DESC
+        `,
+        [id]
+      )
+    ).rows;
 
-    // --- RESPUESTA ---
+    // --- JSON RESPONSE ---
     const metaGlobal = promotores.reduce(
       (sum, p) => sum + Number(p.objetivo),
       0
     );
-    const diasCargados = await pool.query(
-      "SELECT COUNT(*) FROM jornadas WHERE periodo_id = $1",
-      [id]
-    );
+    const diasCargados = jornadas.length;
 
     res.json({
       info: periodo,
@@ -293,7 +305,7 @@ router.get("/:id/analytics", auth, async (req, res) => {
         meta_global: metaGlobal,
         avance_global:
           metaGlobal > 0 ? (totales.total_ventas / metaGlobal) * 100 : 0,
-        dias_cargados: parseInt(diasCargados.rows[0].count),
+        dias_cargados: diasCargados,
         dias_operativos: periodo.dias_operativos,
       },
       desglose_pago: {
@@ -301,11 +313,11 @@ router.get("/:id/analytics", auth, async (req, res) => {
           monto: totales.venta_efectivo,
           fichas: totales.fichas_efectivo,
         },
-        debito: { monto: totales.venta_debito, fichas: totales.fichas_debito }, // Nuevo
+        debito: { monto: totales.venta_debito, fichas: totales.fichas_debito },
         credito: {
           monto: totales.venta_credito,
           fichas: totales.fichas_credito,
-        }, 
+        },
       },
       estadistica: {
         full: fullStats,
@@ -313,10 +325,7 @@ router.get("/:id/analytics", auth, async (req, res) => {
         mann_whitney: mannWhitney,
       },
       segmentacion,
-      tops: {
-        plan: topPlan || { nombre: "Sin datos", cantidad: 0, monto: 0 },
-        pago: topPago || { nombre: "Sin datos", cantidad: 0 },
-      },
+      tops: { plan: topPlan, pago: topPago },
       semanal,
       ventas_diarias: ventasDiarias,
       promotores,
@@ -345,7 +354,7 @@ async function getCountFichas(periodoId, tipo) {
   return parseInt(res.rows[0].count);
 }
 
-// 3. OBTENER UN PERIODO (Edición)
+// 3. OBTENER PERIODO (Edición)
 router.get("/:id", auth, async (req, res) => {
   try {
     const pRes = await pool.query("SELECT * FROM periodos WHERE id = $1", [
