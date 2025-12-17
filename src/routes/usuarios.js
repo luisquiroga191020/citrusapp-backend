@@ -2,10 +2,12 @@ const router = require("express").Router();
 const pool = require("../db");
 const bcrypt = require("bcryptjs");
 const auth = require("../middleware/auth");
+// 1. IMPORTAR EL MIDDLEWARE DE ROLES
+const verifyRole = require("../middleware/roles");
 
-router.get("/", auth, async (req, res) => {
+// Listar Usuarios (Solo Admin debería ver todos los usuarios del sistema)
+router.get("/", auth, verifyRole(["Administrador"]), async (req, res) => {
   try {
-    // Traemos también el nombre de la zona para mostrarlo en la tabla
     const query = `
             SELECT u.id, u.email, u.nombre_completo, u.rol, u.activo, u.zona_id, z.nombre as nombre_zona
             FROM usuarios u
@@ -19,11 +21,11 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
-router.post("/", auth, async (req, res) => {
+// Crear Usuario (CRÍTICO: Solo Admin)
+router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
   const { email, password, nombre_completo, rol, zona_id } = req.body;
   try {
     const hash = await bcrypt.hash(password, 10);
-    // Insertamos zona_id (puede ser null si es admin)
     const result = await pool.query(
       "INSERT INTO usuarios (email, password_hash, nombre_completo, rol, zona_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, email",
       [email, hash, nombre_completo, rol, zona_id]
@@ -36,7 +38,8 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
-router.put("/:id", auth, async (req, res) => {
+// Editar Usuario (Solo Admin)
+router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   const { id } = req.params;
   const { email, nombre_completo, rol, activo, zona_id } = req.body;
   try {
@@ -50,7 +53,8 @@ router.put("/:id", auth, async (req, res) => {
   }
 });
 
-router.delete("/:id", auth, async (req, res) => {
+// Eliminar Usuario (Solo Admin)
+router.delete("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   try {
     await pool.query("DELETE FROM usuarios WHERE id = $1", [req.params.id]);
     res.json({ message: "Eliminado" });
