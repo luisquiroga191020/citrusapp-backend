@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
+const verifyRole = require("../middleware/roles");
 
 router.get("/", auth, async (req, res) => {
   try {
@@ -11,7 +12,7 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const { nombre, color_identificador } = req.body; // <--- Agregado
   try {
     const result = await pool.query(
@@ -24,7 +25,7 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
-router.put("/:id", auth, async (req, res) => {
+router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const { id } = req.params;
   const { nombre, color_identificador } = req.body; // <--- Agregado
   try {
@@ -38,7 +39,7 @@ router.put("/:id", auth, async (req, res) => {
   }
 });
 
-router.delete("/:id", auth, async (req, res) => {
+router.delete("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   try {
     await pool.query("DELETE FROM zonas WHERE id = $1", [req.params.id]);
     res.json({ message: "Zona eliminada" });

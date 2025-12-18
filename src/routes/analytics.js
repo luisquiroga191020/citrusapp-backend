@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
+const verifyRole = require("../middleware/roles");
 
 // 1. RESUMEN GLOBAL (KPIs)
 router.get("/dashboard", auth, async (req, res) => {

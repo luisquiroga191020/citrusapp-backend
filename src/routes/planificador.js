@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
+const verifyRole = require("../middleware/roles");
 
 // 1. OBTENER PLANIFICACIÓN DE UNA FECHA Y ZONA
 router.get("/", auth, async (req, res) => {
@@ -44,7 +45,7 @@ router.get("/", auth, async (req, res) => {
 });
 
 // 2. GUARDAR PLANIFICACIÓN (Transacción completa)
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

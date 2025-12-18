@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
+const verifyRole = require("../middleware/roles");
 
 // Listar Formas de Pago
 router.get("/", auth, async (req, res) => {
@@ -15,7 +16,7 @@ router.get("/", auth, async (req, res) => {
 });
 
 // Crear Forma de Pago
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const { nombre, tipo } = req.body;
   // tipo debe ser: 'Efectivo', 'Débito' o 'Crédito'
   try {
@@ -30,7 +31,7 @@ router.post("/", auth, async (req, res) => {
 });
 
 // Editar
-router.put("/:id", auth, async (req, res) => {
+router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const { id } = req.params;
   const { nombre, tipo } = req.body;
   try {
@@ -45,7 +46,7 @@ router.put("/:id", auth, async (req, res) => {
 });
 
 // Eliminar
-router.delete("/:id", auth, async (req, res) => {
+router.delete("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   try {
     await pool.query("DELETE FROM formas_pago WHERE id = $1", [req.params.id]);
     res.json({ message: "Eliminado correctamente" });

@@ -206,7 +206,7 @@ router.put(
 
 // ... (Rutas de Ventas: POST, PUT, DELETE se mantienen igual)
 // Copia las rutas de ventas del archivo anterior aquí si se borraron
-router.post("/ventas", auth, async (req, res) => {
+router.post("/ventas", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const { jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha } =
     req.body;
   try {
@@ -220,7 +220,7 @@ router.post("/ventas", auth, async (req, res) => {
   }
 });
 
-router.put("/ventas/:id", auth, async (req, res) => {
+router.put("/ventas/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const { plan_id, forma_pago_id, monto, codigo_ficha } = req.body;
   try {
     await pool.query(

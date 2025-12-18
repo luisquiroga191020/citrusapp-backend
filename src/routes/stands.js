@@ -1,11 +1,11 @@
 const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
+const verifyRole = require("../middleware/roles");
 
 // 1. LISTAR STANDS (Con array de localidades)
 router.get("/", auth, async (req, res) => {
   try {
-    // Usamos array_agg de Postgres para juntar las localidades en una sola fila
     const query = `
             SELECT 
                 s.*, 
@@ -48,22 +48,19 @@ router.get("/zona/:zona_id", auth, async (req, res) => {
 });
 
 // 3. CREAR STAND
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const { nombre, zona_id, localidades_ids, ubicacion_lat, ubicacion_lng } =
       req.body;
-    // localidades_ids debe ser un array: ["uuid1", "uuid2"]
 
-    // A. Insertar Stand
     const standRes = await client.query(
       "INSERT INTO stands (nombre, zona_id, ubicacion_lat, ubicacion_lng) VALUES ($1, $2, $3, $4) RETURNING id",
       [nombre, zona_id, ubicacion_lat, ubicacion_lng]
     );
     const standId = standRes.rows[0].id;
 
-    // B. Insertar Relaciones
     if (localidades_ids && localidades_ids.length > 0) {
       for (const locId of localidades_ids) {
         await client.query(
@@ -84,7 +81,7 @@ router.post("/", auth, async (req, res) => {
 });
 
 // 4. EDITAR STAND
-router.put("/:id", auth, async (req, res) => {
+router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -92,13 +89,11 @@ router.put("/:id", auth, async (req, res) => {
     const { nombre, zona_id, localidades_ids, ubicacion_lat, ubicacion_lng } =
       req.body;
 
-    // A. Actualizar datos básicos
     await client.query(
       "UPDATE stands SET nombre = $1, zona_id = $2, ubicacion_lat = $3, ubicacion_lng = $4 WHERE id = $5",
       [nombre, zona_id, ubicacion_lat, ubicacion_lng, id]
     );
 
-    // B. Actualizar Relaciones (Borrar y Crear nuevas)
     await client.query("DELETE FROM stand_localidades WHERE stand_id = $1", [
       id,
     ]);
@@ -123,7 +118,7 @@ router.put("/:id", auth, async (req, res) => {
 });
 
 // 5. ELIMINAR
-router.delete("/:id", auth, async (req, res) => {
+router.delete("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   try {
     await pool.query("DELETE FROM stands WHERE id = $1", [req.params.id]);
     res.json({ message: "Eliminado correctamente" });

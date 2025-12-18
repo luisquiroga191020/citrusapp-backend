@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
+const verifyRole = require("../middleware/roles");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 if (!process.env.GEMINI_API_KEY) {
@@ -57,7 +58,7 @@ Relaciones CLAVE:
 3. ventas -> formas_pago (fp)
 `;
 
-router.post("/chat", auth, async (req, res) => {
+router.post("/chat", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const { pregunta, historial } = req.body;
   const { rol, zona_id } = req.user;
 

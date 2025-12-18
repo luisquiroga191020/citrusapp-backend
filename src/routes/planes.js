@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
+const verifyRole = require("../middleware/roles");
 
 // 1. LISTAR
 router.get("/", auth, async (req, res) => {
@@ -13,7 +14,7 @@ router.get("/", auth, async (req, res) => {
 });
 
 // 2. CREAR
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const { nombre, servicio, tipo } = req.body;
   // servicio ahora llega como array ['Sepelio', 'Salud']
   try {
@@ -28,7 +29,7 @@ router.post("/", auth, async (req, res) => {
 });
 
 // 3. EDITAR
-router.put("/:id", auth, async (req, res) => {
+router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   const { id } = req.params;
   const { nombre, servicio, tipo } = req.body;
   try {
@@ -43,7 +44,7 @@ router.put("/:id", auth, async (req, res) => {
 });
 
 // 4. ELIMINAR
-router.delete("/:id", auth, async (req, res) => {
+router.delete("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
   try {
     await pool.query("DELETE FROM planes WHERE id = $1", [req.params.id]);
     res.json({ message: "Plan eliminado" });
