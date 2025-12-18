@@ -29,23 +29,9 @@ module.exports = async (req, res, next) => {
   // After response finishes, insert audit record (non-blocking)
   res.on('finish', async () => {
     try {
-      // create table if not exists (idempotent)
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS audits (
-          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-          created_at timestamptz DEFAULT now(),
-          user_id uuid NULL,
-          username text NULL,
-          rol text NULL,
-          method text,
-          path text,
-          status int,
-          ip text,
-          user_agent text,
-          device_type text,
-          details jsonb
-        );
-      `);
+      // Tabla y extensiones asumidas creadas manualmente por el administrador.
+      // No intentamos crear extensiones o tablas desde la app para evitar
+      // problemas de permisos en entornos gestionados (Neon).
 
       const ua = req.get('User-Agent') || null;
       const device = detectDeviceType(ua);
@@ -67,7 +53,7 @@ module.exports = async (req, res, next) => {
 
       const insertText = `
         INSERT INTO audits (user_id, username, rol, method, path, status, ip, user_agent, device_type, details)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
       `;
 
       const values = [
@@ -83,10 +69,10 @@ module.exports = async (req, res, next) => {
         details,
       ];
 
-      // fire and forget
-      pool.query(insertText, values).catch((e) => console.error('Audit insert error', e.message));
+      // fire and forget (log any insert error)
+      pool.query(insertText, values).catch((e) => console.error('Audit insert error', e.message, e.stack));
     } catch (err) {
-      console.error('Audit middleware error', err.message);
+      console.error('Audit middleware error', err.message, err.stack);
     }
   });
 
