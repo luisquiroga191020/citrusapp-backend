@@ -4,7 +4,7 @@ const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/roles");
 
 // Listar Formas de Pago
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT * FROM formas_pago ORDER BY nombre ASC"
@@ -16,7 +16,7 @@ router.get("/", auth, async (req, res) => {
 });
 
 // Crear Forma de Pago
-router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
+router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
   const { nombre, tipo } = req.body;
   // tipo debe ser: 'Efectivo', 'Débito' o 'Crédito'
   try {
@@ -31,7 +31,7 @@ router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) 
 });
 
 // Editar
-router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
+router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   const { id } = req.params;
   const { nombre, tipo } = req.body;
   try {
@@ -46,7 +46,7 @@ router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res
 });
 
 // Eliminar
-router.delete("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
+router.delete("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   try {
     await pool.query("DELETE FROM formas_pago WHERE id = $1", [req.params.id]);
     res.json({ message: "Eliminado correctamente" });

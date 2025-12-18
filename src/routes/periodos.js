@@ -82,7 +82,7 @@ const checkPeriodoActivo = async (zona_id, excludeId = null) => {
 // ================================================================
 // 1. LISTAR PERIODOS
 // ================================================================
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const { rol, zona_id } = req.user;
     let query = `
@@ -106,7 +106,7 @@ router.get("/", auth, async (req, res) => {
 // ================================================================
 // 2. DASHBOARD ANALÍTICO AVANZADO (Detalle Periodo)
 // ================================================================
-router.get("/:id/analytics", auth, async (req, res) => {
+router.get("/:id/analytics", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   const { id } = req.params;
   try {
     // A. INFO PERIODO
@@ -351,7 +351,7 @@ async function getCountFichas(periodoId, tipo) {
 }
 
 // ... RUTAS BÁSICAS (Copiarlas si no están) ...
-router.get("/:id", auth, async (req, res) => {
+router.get("/:id", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const pRes = await pool.query("SELECT * FROM periodos WHERE id = $1", [
       req.params.id,
@@ -368,7 +368,7 @@ router.get("/:id", auth, async (req, res) => {
   }
 });
 
-router.get("/activo/:zona_id", auth, async (req, res) => {
+router.get("/activo/:zona_id", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT * FROM periodos WHERE zona_id = $1 AND estado = 'Activo' LIMIT 1`,
@@ -389,7 +389,7 @@ router.get("/activo/:zona_id", auth, async (req, res) => {
 router.post(
   "/",
   auth,
-  verifyRole(["Administrador", "Lider"]),
+  verifyRole(["Administrador"]),
   async (req, res) => {
     const client = await pool.connect();
     try {
@@ -433,7 +433,7 @@ router.post(
 router.put(
   "/:id",
   auth,
-  verifyRole(["Administrador", "Lider"]),
+  verifyRole(["Administrador"]),
   async (req, res) => {
     const client = await pool.connect();
     try {
@@ -486,7 +486,7 @@ router.put(
 router.delete(
   "/:id",
   auth,
-  verifyRole(["Administrador", "Lider"]),
+  verifyRole(["Administrador"]),
   async (req, res) => {
     try {
       await pool.query("DELETE FROM periodos WHERE id = $1", [req.params.id]);

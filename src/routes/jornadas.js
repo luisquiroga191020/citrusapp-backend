@@ -4,7 +4,7 @@ const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/roles");
 
 // 1. LISTAR JORNADAS
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const { rol, zona_id } = req.user;
     let query = `
@@ -35,7 +35,7 @@ router.get("/", auth, async (req, res) => {
 });
 
 // 2. DETALLE JORNADA
-router.get("/:id", auth, async (req, res) => {
+router.get("/:id", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const cabecera = await pool.query(
       `SELECT j.*, z.nombre as zona_nombre, p.nombre as periodo_nombre 

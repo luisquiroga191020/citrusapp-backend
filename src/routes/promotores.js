@@ -4,7 +4,7 @@ const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/roles");
 
 // Listar
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT p.*, z.nombre as zona_nombre FROM promotores p LEFT JOIN zonas z ON p.zona_id = z.id ORDER BY p.nombre_completo"
@@ -16,7 +16,7 @@ router.get("/", auth, async (req, res) => {
 });
 
 // Listar por Zona
-router.get("/zona/:zona_id", auth, async (req, res) => {
+router.get("/zona/:zona_id", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT * FROM promotores WHERE zona_id = $1 ORDER BY nombre_completo",
@@ -29,7 +29,7 @@ router.get("/zona/:zona_id", auth, async (req, res) => {
 });
 
 // PERFORMANCE HISTÓRICO
-router.get("/:id/performance", auth, async (req, res) => {
+router.get("/:id/performance", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const query = `
             SELECT p.nombre as periodo, pp.objetivo, 
@@ -51,7 +51,7 @@ router.get("/:id/performance", auth, async (req, res) => {
 });
 
 // Crear
-router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
+router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
   const {
     codigo,
     nombre_completo,
@@ -72,7 +72,7 @@ router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) 
 });
 
 // Editar
-router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
+router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   const {
     codigo,
     nombre_completo,
@@ -101,7 +101,7 @@ router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res
 });
 
 // Borrar
-router.delete("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
+router.delete("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   try {
     await pool.query("DELETE FROM promotores WHERE id = $1", [req.params.id]);
     res.json({ message: "Eliminado" });

@@ -4,7 +4,7 @@ const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/roles");
 
 // 1. LISTAR STANDS (Con array de localidades)
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const query = `
             SELECT 
@@ -27,7 +27,7 @@ router.get("/", auth, async (req, res) => {
 });
 
 // 2. FILTRAR POR ZONA
-router.get("/zona/:zona_id", auth, async (req, res) => {
+router.get("/zona/:zona_id", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   try {
     const query = `
             SELECT 
@@ -48,7 +48,7 @@ router.get("/zona/:zona_id", auth, async (req, res) => {
 });
 
 // 3. CREAR STAND
-router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
+router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -81,7 +81,7 @@ router.post("/", auth, verifyRole(["Administrador", "Lider"]), async (req, res) 
 });
 
 // 4. EDITAR STAND
-router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
+router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -118,7 +118,7 @@ router.put("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res
 });
 
 // 5. ELIMINAR
-router.delete("/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
+router.delete("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   try {
     await pool.query("DELETE FROM stands WHERE id = $1", [req.params.id]);
     res.json({ message: "Eliminado correctamente" });

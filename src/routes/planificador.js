@@ -4,7 +4,7 @@ const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/roles");
 
 // 1. OBTENER PLANIFICACIÓN DE UNA FECHA Y ZONA
-router.get("/", auth, async (req, res) => {
+router.get("/", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
   const { fecha, zona_id } = req.query;
   try {
     // Si es lider, forzamos su zona
