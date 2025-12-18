@@ -36,6 +36,20 @@ module.exports = async (req, res, next) => {
       const ua = req.get('User-Agent') || null;
       const device = detectDeviceType(ua);
 
+      // Normalize IP: prefer X-Forwarded-For (comma list), fall back to req.ip or remoteAddress
+      let ip = null;
+      try {
+        const xff = req.headers['x-forwarded-for'] || req.headers['X-Forwarded-For'] || null;
+        if (xff && typeof xff === 'string' && xff.length) {
+          ip = xff.split(',')[0].trim();
+        }
+      } catch (e) {
+        ip = null;
+      }
+      if (!ip) ip = req.ip || req.connection?.remoteAddress || null;
+      // If IPv6-mapped IPv4 (e.g. ::ffff:127.0.0.1) convert to IPv4
+      if (ip && ip.startsWith('::ffff:')) ip = ip.replace('::ffff:', '');
+
       // don't log request body blindly — include limited details
       const details = {
         query: req.query || {},
@@ -71,7 +85,7 @@ module.exports = async (req, res, next) => {
         req.method,
         req.originalUrl || req.url,
         res.statusCode,
-        req.ip || req.connection?.remoteAddress || null,
+        ip,
         ua,
         device,
         details,

@@ -23,6 +23,8 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 app.use(helmet());
+// If running behind a proxy (Render, Heroku, nginx), trust proxy headers so req.ip and protocol are correct
+app.set('trust proxy', true);
 
 // Auditoría: registrar todas las peticiones
 app.use(audit);
@@ -157,4 +159,6 @@ app.use("/api/ia", iaRoutes);
 app.use("/api/planificador", planificadorRoutes);
 const auditsRoutes = require('./routes/audits');
 app.use('/api/audits', auditsRoutes);
+const proxyRoutes = require('./routes/proxy');
+app.use('/proxy', proxyRoutes);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
