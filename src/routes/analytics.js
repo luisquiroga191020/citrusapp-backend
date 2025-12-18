@@ -93,7 +93,7 @@ router.get("/ranking", auth, async (req, res) => {
                 }
             
                 query += `
-                        GROUP BY pr.id, pr.nombre_completo, pr.foto_url, pp.objetivo, j.tipo, z.nombre
+                        GROUP BY pr.id, pr.nombre_completo, pr.foto_url, pp.objetivo, COALESCE(j.tipo, 'N/A'), COALESCE(z.nombre, 'Sin Zona')
                         ORDER BY venta_real DESC
                         LIMIT 10
                     
