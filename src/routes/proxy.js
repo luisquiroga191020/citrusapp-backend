@@ -32,53 +32,26 @@ router.get('/', async (req, res) => {
       },
     });
 
-    // --- START OF SIMPLIFICATION ---
     // For debugging, just pass through the original HTML.
-    // This will confirm if the proxy fetch is working.
-    // The navigation inside the iframe will be broken.
     res.set('Content-Type', resp.headers['content-type'] || 'text/html');
     res.send(resp.data);
-    // --- END OF SIMPLIFICATION ---
-
-    /* --- ORIGINAL CODE ---
-    const html = resp.data;
-    const $ = cheerio.load(html, { decodeEntities: false });
-
-    // Rewrite all anchor tags so navigation goes through the proxy
-    $('a').each((i, el) => {
-      const href = $(el).attr('href');
-      if (!href) return;
-      // ignore mailto/tel/javascript
-      if (/^(mailto:|tel:|javascript:|#)/i.test(href)) return;
-      try {
-        const resolved = new URL(href, parsed.origin + parsed.pathname).href;
-        $(el).attr('href', `/proxy?url=${encodeURIComponent(resolved)}`);
-        $(el).removeAttr('target');
-      } catch (e) {
-        // skip invalid
-      }
-    });
-
-    // Rewrite forms to submit through proxy
-    $('form').each((i, el) => {
-      const action = $(el).attr('action') || '';
-      try {
-        const resolved = action ? new URL(action, parsed.origin + parsed.pathname).href : parsed.href;
-        $(el).attr('action', `/proxy?url=${encodeURIComponent(resolved)}`);
-        $(el).removeAttr('target');
-      } catch (e) {}
-    });
-
-    // Inject a small banner so users know they're viewing proxied content (optional)
-    $('body').prepend(`\n<!-- Proxied by Comercial360 -->\n<div style="position:fixed;left:0;right:0;top:0;background:#111;color:#fff;padding:6px 10px;z-index:9999;font-size:12px;opacity:0.9">Viendo: ${parsed.hostname} — Navegación a través del proxy</div><div style="height:34px"></div>\n`);
-
-    // Respond with rewritten HTML
-    res.set('Content-Type', 'text/html; charset=utf-8');
-    res.send($.html());
-    */
+    
   } catch (err) {
-    console.error('Proxy fetch error', err.message);
-    res.status(500).send('Error fetching remote page');
+    if (err.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      console.error('Proxy axios error:', err.response.status, err.response.statusText);
+      // Send the original error page and status back to the iframe
+      res.status(err.response.status).send(err.response.data);
+    } else if (err.request) {
+      // The request was made but no response was received
+      console.error('Proxy no response:', err.request);
+      res.status(504).send('<h1>Error 504</h1><p>No response from upstream server.</p>');
+    } else {
+      // Something happened in setting up the request that triggered an Error
+      console.error('Proxy setup error:', err.message);
+      res.status(500).send('<h1>Error 500</h1><p>Error setting up request to upstream server.</p>');
+    }
   }
 });
 
