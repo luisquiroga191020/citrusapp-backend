@@ -41,10 +41,9 @@ router.get('/', auth, async (req, res) => {
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
 
   try {
-    const totalRes = await pool.query(`SELECT count(*) FROM audits ${where}`, values);
+    const totalRes = await pool.query(`SELECT count(*) FROM audits a ${where}`, values);
     const total = parseInt(totalRes.rows[0].count, 10);
-
-    const q = `SELECT * FROM audits ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+    const q = `SELECT a.*, u.nombre_completo as user_fullname FROM audits a LEFT JOIN usuarios u ON a.user_id = u.id ${where} ORDER BY a.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
     const data = await pool.query(q, values);
 
     res.json({ page, limit, total, rows: data.rows });

@@ -42,6 +42,14 @@ module.exports = async (req, res, next) => {
         params: req.params || {},
       };
 
+      // capture view name if frontend sends it
+      try {
+        const viewName = req.get('X-View-Name') || req.get('x-view-name') || null;
+        if (viewName) details.view = viewName;
+      } catch (e) {
+        // ignore
+      }
+
       // include body for non-sensitive endpoints
       if (req.body && Object.keys(req.body).length) {
         // avoid logging common sensitive fields
