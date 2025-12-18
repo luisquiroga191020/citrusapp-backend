@@ -44,13 +44,14 @@ router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
     viviendas,
     latitud,
     longitud,
+    link_estadisticas,
   } = req.body;
 
   try {
     const result = await pool.query(
       `INSERT INTO localidades 
-            (nombre, departamento, zona_id, presencia, poblacion, certificados_activos, viviendas, latitud, longitud) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+            (nombre, departamento, zona_id, presencia, poblacion, certificados_activos, viviendas, latitud, longitud, link_estadisticas) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
             RETURNING *`,
       [
         nombre,
@@ -62,6 +63,7 @@ router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
         viviendas,
         latitud,
         longitud,
+        link_estadisticas,
       ]
     );
     res.json(result.rows[0]);
@@ -83,6 +85,7 @@ router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
     viviendas,
     latitud,
     longitud,
+    link_estadisticas,
   } = req.body;
 
   try {
@@ -91,8 +94,8 @@ router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
                 nombre = $1, departamento = $2, zona_id = $3, 
                 presencia = $4, poblacion = $5, 
                 certificados_activos = $6, viviendas = $7, 
-                latitud = $8, longitud = $9
-             WHERE id = $10`,
+                latitud = $8, longitud = $9, link_estadisticas = $10
+             WHERE id = $11`,
       [
         nombre,
         departamento,
@@ -103,6 +106,7 @@ router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
         viviendas,
         latitud,
         longitud,
+        link_estadisticas,
         id,
       ]
     );

@@ -159,6 +159,5 @@ app.use("/api/ia", iaRoutes);
 app.use("/api/planificador", planificadorRoutes);
 const auditsRoutes = require('./routes/audits');
 app.use('/api/audits', auditsRoutes);
-const proxyRoutes = require('./routes/proxy');
-app.use('/proxy', proxyRoutes);
+
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
