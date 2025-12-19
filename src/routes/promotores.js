@@ -34,7 +34,8 @@ router.get("/:id/performance", auth, verifyRole(["Administrador", "Lider", "Visu
     const query = `
             SELECT p.nombre as periodo, pp.objetivo, 
             COALESCE(SUM(v.monto),0) as venta_real,
-            (COALESCE(SUM(v.monto),0) - pp.objetivo) as delta
+            (COALESCE(SUM(v.monto),0) - pp.objetivo) as delta,
+            COUNT(v.id) as total_fichas
             FROM periodo_promotores pp
             JOIN periodos p ON pp.periodo_id = p.id
             LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id AND jp.jornada_id IN (SELECT id FROM jornadas WHERE periodo_id = p.id))
