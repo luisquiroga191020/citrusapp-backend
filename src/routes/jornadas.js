@@ -204,15 +204,14 @@ router.put(
   }
 );
 
-// ... (Rutas de Ventas: POST, PUT, DELETE se mantienen igual)
-// Copia las rutas de ventas del archivo anterior aquí si se borraron
+
 router.post("/ventas", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
-  const { jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha } =
+  const { jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha, tipo } =
     req.body;
   try {
     await pool.query(
-      `INSERT INTO ventas (jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha) VALUES ($1, $2, $3, $4, $5)`,
-      [jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha]
+      `INSERT INTO ventas (jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha, tipo) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha, tipo || 'individual']
     );
     res.json({ message: "Registrada" });
   } catch (e) {
@@ -221,11 +220,11 @@ router.post("/ventas", auth, verifyRole(["Administrador", "Lider"]), async (req,
 });
 
 router.put("/ventas/:id", auth, verifyRole(["Administrador", "Lider"]), async (req, res) => {
-  const { plan_id, forma_pago_id, monto, codigo_ficha } = req.body;
+  const { plan_id, forma_pago_id, monto, codigo_ficha, tipo } = req.body;
   try {
     await pool.query(
-      `UPDATE ventas SET plan_id=$1, forma_pago_id=$2, monto=$3, codigo_ficha=$4 WHERE id=$5`,
-      [plan_id, forma_pago_id, monto, codigo_ficha, req.params.id]
+      `UPDATE ventas SET plan_id=$1, forma_pago_id=$2, monto=$3, codigo_ficha=$4, tipo=$5 WHERE id=$6`,
+      [plan_id, forma_pago_id, monto, codigo_ficha, tipo || 'individual', req.params.id]
     );
     res.json({ message: "Actualizada" });
   } catch (e) {
