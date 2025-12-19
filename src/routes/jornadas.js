@@ -74,7 +74,7 @@ router.get("/:id", auth, verifyRole(["Administrador", "Lider", "Visualizador"]),
     );
 
     const ventas = await pool.query(
-      `SELECT v.*, pl.nombre as plan_nombre, fp.nombre as forma_pago, pr.nombre_completo as promotor, pr.id as promotor_id
+      `SELECT v.*, pl.nombre as plan_nombre, fp.nombre as forma_pago, fp.tipo as forma_pago_tipo, pr.nombre_completo as promotor, pr.id as promotor_id
        FROM ventas v
        JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
        JOIN promotores pr ON jp.promotor_id = pr.id
