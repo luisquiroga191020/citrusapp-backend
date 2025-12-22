@@ -126,6 +126,34 @@ app.post('/auth/logout', auth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Verificar token y devolver usuario actualizado
+app.get("/auth/me", auth, async (req, res) => {
+  try {
+    const user = await pool.query("SELECT id, email, nombre_completo, rol, activo, zona_id FROM usuarios WHERE id = $1", [
+      req.user.id,
+    ]);
+
+    if (user.rows.length === 0) {
+      return res.status(404).json({ error: "Usuario no encontrado" });
+    }
+    
+    const usuarioData = user.rows[0];
+
+    res.json({
+      user: {
+        id: usuarioData.id,
+        nombre: usuarioData.nombre_completo,
+        email: usuarioData.email,
+        rol: usuarioData.rol,
+        zona_id: usuarioData.zona_id,
+      },
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- RUTAS DE DATOS (Protegidas) ---
 
 app.get("/api/dashboard", auth, async (req, res) => {
