@@ -11,7 +11,7 @@ router.get(
   async (req, res) => {
     try {
       const result = await pool.query(
-        "SELECT p.*, z.nombre as zona_nombre FROM promotores p LEFT JOIN zonas z ON p.zona_id = z.id WHERE p.activo = true ORDER BY p.nombre_completo"
+        "SELECT p.*, z.nombre as zona_nombre FROM promotores p LEFT JOIN zonas z ON p.zona_id = z.id ORDER BY p.activo DESC, p.nombre_completo"
       );
       res.json(result.rows);
     } catch (err) {
@@ -96,20 +96,30 @@ router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
     zona_id,
     objetivo_base,
     tipo_jornada,
+    activo,
   } = req.body;
   try {
-    await pool.query(
-      "UPDATE promotores SET codigo=$1, nombre_completo=$2, foto_url=$3, zona_id=$4, objetivo_base=$5, tipo_jornada=$6 WHERE id=$7",
-      [
-        codigo,
-        nombre_completo,
-        foto_url,
-        zona_id,
-        objetivo_base,
-        tipo_jornada,
+    // Si solo se envía activo (para reactivar), solo actualizar ese campo
+    if (activo !== undefined && Object.keys(req.body).length === 1) {
+      await pool.query("UPDATE promotores SET activo=$1 WHERE id=$2", [
+        activo,
         req.params.id,
-      ]
-    );
+      ]);
+    } else {
+      // Actualización completa
+      await pool.query(
+        "UPDATE promotores SET codigo=$1, nombre_completo=$2, foto_url=$3, zona_id=$4, objetivo_base=$5, tipo_jornada=$6 WHERE id=$7",
+        [
+          codigo,
+          nombre_completo,
+          foto_url,
+          zona_id,
+          objetivo_base,
+          tipo_jornada,
+          req.params.id,
+        ]
+      );
+    }
     res.json({ message: "Actualizado" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -128,12 +138,10 @@ router.delete("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
         await pool.query("UPDATE promotores SET activo = false WHERE id = $1", [
           req.params.id,
         ]);
-        return res
-          .status(200)
-          .json({
-            message: "Desactivado (Soft Delete) por historial asociado",
-            type: "soft_delete",
-          });
+        return res.status(200).json({
+          message: "Desactivado (Soft Delete) por historial asociado",
+          type: "soft_delete",
+        });
       } catch (updateErr) {
         return res.status(500).json({ error: updateErr.message });
       }
