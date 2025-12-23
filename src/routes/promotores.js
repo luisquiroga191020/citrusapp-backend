@@ -4,34 +4,48 @@ const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/roles");
 
 // Listar
-router.get("/", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
-  try {
-    const result = await pool.query(
-      "SELECT p.*, z.nombre as zona_nombre FROM promotores p LEFT JOIN zonas z ON p.zona_id = z.id ORDER BY p.nombre_completo"
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+router.get(
+  "/",
+  auth,
+  verifyRole(["Administrador", "Lider", "Visualizador"]),
+  async (req, res) => {
+    try {
+      const result = await pool.query(
+        "SELECT p.*, z.nombre as zona_nombre FROM promotores p LEFT JOIN zonas z ON p.zona_id = z.id WHERE p.activo = true ORDER BY p.nombre_completo"
+      );
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   }
-});
+);
 
 // Listar por Zona
-router.get("/zona/:zona_id", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
-  try {
-    const result = await pool.query(
-      "SELECT * FROM promotores WHERE zona_id = $1 ORDER BY nombre_completo",
-      [req.params.zona_id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+router.get(
+  "/zona/:zona_id",
+  auth,
+  verifyRole(["Administrador", "Lider", "Visualizador"]),
+  async (req, res) => {
+    try {
+      const result = await pool.query(
+        "SELECT * FROM promotores WHERE zona_id = $1 AND activo = true ORDER BY nombre_completo",
+        [req.params.zona_id]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   }
-});
+);
 
 // PERFORMANCE HISTÓRICO
-router.get("/:id/performance", auth, verifyRole(["Administrador", "Lider", "Visualizador"]), async (req, res) => {
-  try {
-    const query = `
+router.get(
+  "/:id/performance",
+  auth,
+  verifyRole(["Administrador", "Lider", "Visualizador"]),
+  async (req, res) => {
+    try {
+      const query = `
             SELECT p.nombre as periodo, pp.objetivo, 
             COALESCE(SUM(v.monto),0) as venta_real,
             (COALESCE(SUM(v.monto),0) - pp.objetivo) as delta,
@@ -44,12 +58,13 @@ router.get("/:id/performance", auth, verifyRole(["Administrador", "Lider", "Visu
             GROUP BY p.nombre, pp.objetivo, p.fecha_inicio
             ORDER BY p.fecha_inicio DESC
         `;
-    const result = await pool.query(query, [req.params.id]);
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+      const result = await pool.query(query, [req.params.id]);
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   }
-});
+);
 
 // Crear
 router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
@@ -63,7 +78,7 @@ router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
   } = req.body;
   try {
     await pool.query(
-      "INSERT INTO promotores (codigo, nombre_completo, foto_url, zona_id, objetivo_base, tipo_jornada) VALUES ($1, $2, $3, $4, $5, $6)",
+      "INSERT INTO promotores (codigo, nombre_completo, foto_url, zona_id, objetivo_base, tipo_jornada, activo) VALUES ($1, $2, $3, $4, $5, $6, true)",
       [codigo, nombre_completo, foto_url, zona_id, objetivo_base, tipo_jornada]
     );
     res.json({ message: "Creado" });
@@ -105,9 +120,25 @@ router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
 router.delete("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   try {
     await pool.query("DELETE FROM promotores WHERE id = $1", [req.params.id]);
-    res.json({ message: "Eliminado" });
+    res.json({ message: "Eliminado permanentemente", type: "hard_delete" });
   } catch (err) {
-    res.status(500).json({ error: "No se puede eliminar" });
+    // Si falla por restricción de llave foránea (código 23503 en Postgres), hacemos soft delete
+    if (err.code === "23503") {
+      try {
+        await pool.query("UPDATE promotores SET activo = false WHERE id = $1", [
+          req.params.id,
+        ]);
+        return res
+          .status(200)
+          .json({
+            message: "Desactivado (Soft Delete) por historial asociado",
+            type: "soft_delete",
+          });
+      } catch (updateErr) {
+        return res.status(500).json({ error: updateErr.message });
+      }
+    }
+    res.status(500).json({ error: "No se puede eliminar: " + err.message });
   }
 });
 
