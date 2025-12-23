@@ -76,7 +76,7 @@ router.get(
        FROM jornada_promotores jp
        JOIN promotores pr ON jp.promotor_id = pr.id
        JOIN jornadas j ON jp.jornada_id = j.id
-       JOIN periodo_promotores pp ON (pp.periodo_id = j.periodo_id AND pp.promotor_id = jp.promotor_id)
+       LEFT JOIN periodo_promotores pp ON (pp.periodo_id = j.periodo_id AND pp.promotor_id = jp.promotor_id)
        WHERE jp.jornada_id = $1 
        ORDER BY pr.nombre_completo`,
         [req.params.id]
