@@ -71,7 +71,6 @@ router.get(
             SELECT 
               j.id as jornada_id,
               j.fecha,
-              (SELECT asistencia FROM jornada_promotores WHERE jornada_id = j.id AND promotor_id = $1 LIMIT 1) as asistencia,
               COUNT(v.id) as fichas,
               COALESCE(SUM(v.monto), 0) as venta_dia
             FROM jornadas j
