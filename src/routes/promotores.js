@@ -45,21 +45,55 @@ router.get(
   verifyRole(["Administrador", "Lider", "Visualizador"]),
   async (req, res) => {
     try {
-      const query = `
-            SELECT p.nombre as periodo, pp.objetivo, 
-            COALESCE(SUM(v.monto),0) as venta_real,
-            (COALESCE(SUM(v.monto),0) - pp.objetivo) as delta,
-            COUNT(v.id) as total_fichas
+      // Primero obtenemos los periodos con sus totales
+      const periodosQuery = `
+            SELECT 
+              p.id as periodo_id,
+              p.nombre as periodo, 
+              pp.objetivo, 
+              COALESCE(SUM(v.monto),0) as venta_real,
+              (COALESCE(SUM(v.monto),0) - pp.objetivo) as delta,
+              COUNT(v.id) as total_fichas
             FROM periodo_promotores pp
             JOIN periodos p ON pp.periodo_id = p.id
             LEFT JOIN jornada_promotores jp ON (jp.promotor_id = pp.promotor_id AND jp.jornada_id IN (SELECT id FROM jornadas WHERE periodo_id = p.id))
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
             WHERE pp.promotor_id = $1
-            GROUP BY p.nombre, pp.objetivo, p.fecha_inicio
+            GROUP BY p.id, p.nombre, pp.objetivo, p.fecha_inicio
             ORDER BY p.fecha_inicio DESC
         `;
-      const result = await pool.query(query, [req.params.id]);
-      res.json(result.rows);
+      const periodosResult = await pool.query(periodosQuery, [req.params.id]);
+
+      // Para cada periodo, obtenemos el detalle de jornadas
+      const periodosConJornadas = await Promise.all(
+        periodosResult.rows.map(async (periodo) => {
+          const jornadasQuery = `
+            SELECT 
+              j.id as jornada_id,
+              j.fecha,
+              jp.asistencia,
+              COUNT(v.id) as fichas,
+              COALESCE(SUM(v.monto), 0) as venta_dia
+            FROM jornadas j
+            LEFT JOIN jornada_promotores jp ON jp.jornada_id = j.id AND jp.promotor_id = $1
+            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+            WHERE j.periodo_id = $2
+            GROUP BY j.id, j.fecha, jp.asistencia
+            ORDER BY j.fecha DESC
+          `;
+          const jornadasResult = await pool.query(jornadasQuery, [
+            req.params.id,
+            periodo.periodo_id,
+          ]);
+
+          return {
+            ...periodo,
+            jornadas: jornadasResult.rows,
+          };
+        })
+      );
+
+      res.json(periodosConJornadas);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
