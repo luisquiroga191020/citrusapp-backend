@@ -54,12 +54,12 @@ router.get(
               COALESCE(SUM(v.monto),0) as venta_real,
               (COALESCE(SUM(v.monto),0) - pp.objetivo) as delta,
               COUNT(DISTINCT v.id) as total_fichas
-            FROM periodo_promotores pp
-            JOIN periodos p ON pp.periodo_id = p.id
+            FROM periodos p
+            LEFT JOIN periodo_promotores pp ON (pp.periodo_id = p.id AND pp.promotor_id = $1)
             LEFT JOIN jornadas j ON j.periodo_id = p.id
-            LEFT JOIN jornada_promotores jp ON (jp.jornada_id = j.id AND jp.promotor_id = pp.promotor_id)
+            LEFT JOIN jornada_promotores jp ON (jp.jornada_id = j.id AND jp.promotor_id = $1)
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-            WHERE pp.promotor_id = $1
+            WHERE pp.id IS NOT NULL
             GROUP BY p.id, p.nombre, pp.objetivo, p.fecha_inicio
             ORDER BY p.fecha_inicio DESC
         `;
