@@ -79,7 +79,7 @@ router.get(
               COUNT(v.id) as fichas,
               COALESCE(SUM(v.monto), 0) as venta_dia
             FROM jornadas j
-            LEFT JOIN jornada_promotores jp ON jp.jornada_id = j.id AND jp.promotor_id = $1
+            INNER JOIN jornada_promotores jp ON jp.jornada_id = j.id AND jp.promotor_id = $1
             LEFT JOIN zonas z ON z.id = jp.zona_id
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
             WHERE j.periodo_id = $2
