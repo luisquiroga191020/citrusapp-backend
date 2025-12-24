@@ -45,29 +45,54 @@ router.get(
   verifyRole(["Administrador", "Lider", "Visualizador"]),
   async (req, res) => {
     try {
-      // Primero obtenemos los periodos con sus totales
-      const periodosQuery = `
-            SELECT 
+      // Obtenemos todas las combinaciones de periodo-zona donde el promotor trabajó
+      const periodosZonasQuery = `
+            SELECT DISTINCT
               p.id as periodo_id,
-              p.nombre as periodo, 
-              pp.objetivo, 
-              COALESCE(SUM(v.monto),0) as venta_real,
-              (COALESCE(SUM(v.monto),0) - pp.objetivo) as delta,
-              COUNT(DISTINCT v.id) as total_fichas
-            FROM periodos p
-            LEFT JOIN periodo_promotores pp ON (pp.periodo_id = p.id AND pp.promotor_id = $1)
-            LEFT JOIN jornadas j ON j.periodo_id = p.id
-            LEFT JOIN jornada_promotores jp ON (jp.jornada_id = j.id AND jp.promotor_id = $1)
-            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-            WHERE pp.id IS NOT NULL
-            GROUP BY p.id, p.nombre, pp.objetivo, p.fecha_inicio
-            ORDER BY p.fecha_inicio DESC
+              p.nombre as periodo,
+              z.id as zona_id,
+              z.nombre as zona_nombre,
+              pp.objetivo,
+              p.fecha_inicio
+            FROM jornada_promotores jp
+            JOIN jornadas j ON jp.jornada_id = j.id
+            JOIN periodos p ON j.periodo_id = p.id
+            JOIN zonas z ON jp.zona_id = z.id
+            LEFT JOIN periodo_promotores pp ON (pp.periodo_id = p.id AND pp.promotor_id = jp.promotor_id)
+            WHERE jp.promotor_id = $1
+            ORDER BY p.fecha_inicio DESC, z.nombre
         `;
-      const periodosResult = await pool.query(periodosQuery, [req.params.id]);
+      const periodosZonasResult = await pool.query(periodosZonasQuery, [
+        req.params.id,
+      ]);
 
-      // Para cada periodo, obtenemos el detalle de jornadas
+      // Para cada combinación periodo-zona, obtenemos totales y jornadas
       const periodosConJornadas = await Promise.all(
-        periodosResult.rows.map(async (periodo) => {
+        periodosZonasResult.rows.map(async (periodoZona) => {
+          // Calcular totales para esta combinación periodo-zona
+          const totalesQuery = `
+            SELECT 
+              COALESCE(SUM(v.monto), 0) as venta_real,
+              COUNT(DISTINCT v.id) as total_fichas
+            FROM jornada_promotores jp
+            JOIN jornadas j ON jp.jornada_id = j.id
+            LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+            WHERE jp.promotor_id = $1 
+              AND j.periodo_id = $2
+              AND jp.zona_id = $3
+          `;
+          const totalesResult = await pool.query(totalesQuery, [
+            req.params.id,
+            periodoZona.periodo_id,
+            periodoZona.zona_id,
+          ]);
+
+          const venta_real = totalesResult.rows[0].venta_real;
+          const total_fichas = totalesResult.rows[0].total_fichas;
+          const objetivo = periodoZona.objetivo || 0;
+          const delta = venta_real - objetivo;
+
+          // Obtener jornadas para esta combinación periodo-zona
           const jornadasQuery = `
             SELECT 
               j.id as jornada_id,
@@ -82,17 +107,24 @@ router.get(
             INNER JOIN jornada_promotores jp ON jp.jornada_id = j.id AND jp.promotor_id = $1
             LEFT JOIN zonas z ON z.id = jp.zona_id
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-            WHERE j.periodo_id = $2
+            WHERE j.periodo_id = $2 AND jp.zona_id = $3
             GROUP BY j.id, j.fecha, z.nombre, jp.stands_ids
             ORDER BY j.fecha DESC
           `;
           const jornadasResult = await pool.query(jornadasQuery, [
             req.params.id,
-            periodo.periodo_id,
+            periodoZona.periodo_id,
+            periodoZona.zona_id,
           ]);
 
           return {
-            ...periodo,
+            periodo_id: periodoZona.periodo_id,
+            periodo: `${periodoZona.periodo} - ${periodoZona.zona_nombre}`,
+            zona_nombre: periodoZona.zona_nombre,
+            objetivo: objetivo,
+            venta_real: venta_real,
+            delta: delta,
+            total_fichas: total_fichas,
             jornadas: jornadasResult.rows,
           };
         })
