@@ -71,14 +71,14 @@ router.get(
             SELECT 
               j.id as jornada_id,
               j.fecha,
-              jp.asistencia,
+              MAX(jp.asistencia) as asistencia,
               COUNT(v.id) as fichas,
               COALESCE(SUM(v.monto), 0) as venta_dia
             FROM jornadas j
             LEFT JOIN jornada_promotores jp ON jp.jornada_id = j.id AND jp.promotor_id = $1
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
             WHERE j.periodo_id = $2
-            GROUP BY j.id, j.fecha, jp.asistencia
+            GROUP BY j.id, j.fecha
             ORDER BY j.fecha DESC
           `;
           const jornadasResult = await pool.query(jornadasQuery, [
