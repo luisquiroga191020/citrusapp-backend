@@ -45,31 +45,26 @@ router.get(
   verifyRole(["Administrador", "Lider", "Visualizador"]),
   async (req, res) => {
     try {
-      // Obtenemos todas las combinaciones de periodo-zona donde el promotor trabajó
-      const periodosZonasQuery = `
+      // Obtenemos todos los periodos donde el promotor trabajó (sin agrupar por zona)
+      const periodosQuery = `
             SELECT DISTINCT
               p.id as periodo_id,
               p.nombre as periodo,
-              z.id as zona_id,
-              z.nombre as zona_nombre,
               pp.objetivo,
               p.fecha_inicio
             FROM jornada_promotores jp
             JOIN jornadas j ON jp.jornada_id = j.id
             JOIN periodos p ON j.periodo_id = p.id
-            JOIN zonas z ON jp.zona_id = z.id
             LEFT JOIN periodo_promotores pp ON (pp.periodo_id = p.id AND pp.promotor_id = jp.promotor_id)
             WHERE jp.promotor_id = $1
-            ORDER BY p.fecha_inicio DESC, z.nombre
+            ORDER BY p.fecha_inicio DESC
         `;
-      const periodosZonasResult = await pool.query(periodosZonasQuery, [
-        req.params.id,
-      ]);
+      const periodosResult = await pool.query(periodosQuery, [req.params.id]);
 
-      // Para cada combinación periodo-zona, obtenemos totales y jornadas
+      // Para cada periodo, obtenemos totales y jornadas con sus ventas
       const periodosConJornadas = await Promise.all(
-        periodosZonasResult.rows.map(async (periodoZona) => {
-          // Calcular totales para esta combinación periodo-zona
+        periodosResult.rows.map(async (periodo) => {
+          // Calcular totales para todo el periodo (todas las zonas)
           const totalesQuery = `
             SELECT 
               COALESCE(SUM(v.monto), 0) as venta_real,
@@ -79,24 +74,23 @@ router.get(
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
             WHERE jp.promotor_id = $1 
               AND j.periodo_id = $2
-              AND jp.zona_id = $3
           `;
           const totalesResult = await pool.query(totalesQuery, [
             req.params.id,
-            periodoZona.periodo_id,
-            periodoZona.zona_id,
+            periodo.periodo_id,
           ]);
 
           const venta_real = totalesResult.rows[0].venta_real;
           const total_fichas = totalesResult.rows[0].total_fichas;
-          const objetivo = periodoZona.objetivo || 0;
+          const objetivo = periodo.objetivo || 0;
           const delta = venta_real - objetivo;
 
-          // Obtener jornadas para esta combinación periodo-zona
+          // Obtener jornadas para este periodo
           const jornadasQuery = `
             SELECT 
               j.id as jornada_id,
               j.fecha,
+              jp.id as jornada_promotor_id,
               z.nombre as zona_nombre,
               (SELECT string_agg(s.nombre, ', ') 
                FROM stands s 
@@ -107,25 +101,51 @@ router.get(
             INNER JOIN jornada_promotores jp ON jp.jornada_id = j.id AND jp.promotor_id = $1
             LEFT JOIN zonas z ON z.id = jp.zona_id
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-            WHERE j.periodo_id = $2 AND jp.zona_id = $3
-            GROUP BY j.id, j.fecha, z.nombre, jp.stands_ids
+            WHERE j.periodo_id = $2
+            GROUP BY j.id, j.fecha, jp.id, z.nombre, jp.stands_ids
             ORDER BY j.fecha DESC
           `;
           const jornadasResult = await pool.query(jornadasQuery, [
             req.params.id,
-            periodoZona.periodo_id,
-            periodoZona.zona_id,
+            periodo.periodo_id,
           ]);
 
+          // Para cada jornada, obtener las ventas individuales
+          const jornadasConVentas = await Promise.all(
+            jornadasResult.rows.map(async (jornada) => {
+              const ventasQuery = `
+                SELECT 
+                  v.id,
+                  v.monto,
+                  v.codigo_ficha,
+                  v.created_at,
+                  pl.nombre as plan_nombre,
+                  fp.nombre as forma_pago
+                FROM ventas v
+                JOIN planes pl ON v.plan_id = pl.id
+                JOIN formas_pago fp ON v.forma_pago_id = fp.id
+                WHERE v.jornada_promotor_id = $1
+                ORDER BY v.created_at DESC
+              `;
+              const ventasResult = await pool.query(ventasQuery, [
+                jornada.jornada_promotor_id,
+              ]);
+
+              return {
+                ...jornada,
+                ventas: ventasResult.rows,
+              };
+            })
+          );
+
           return {
-            periodo_id: periodoZona.periodo_id,
-            periodo: `${periodoZona.periodo} - ${periodoZona.zona_nombre}`,
-            zona_nombre: periodoZona.zona_nombre,
+            periodo_id: periodo.periodo_id,
+            periodo: periodo.periodo,
             objetivo: objetivo,
             venta_real: venta_real,
             delta: delta,
             total_fichas: total_fichas,
-            jornadas: jornadasResult.rows,
+            jornadas: jornadasConVentas,
           };
         })
       );
