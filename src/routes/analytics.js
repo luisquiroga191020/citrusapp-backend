@@ -18,20 +18,22 @@ router.get("/dashboard", auth, async (req, res) => {
     const query = `
             SELECT
                 -- 1. Ventas del Mes Actual
-                (SELECT COALESCE(SUM(monto), 0) 
+                (SELECT COALESCE(SUM(v.monto), 0) 
                  FROM ventas v 
-                 LEFT JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-                 LEFT JOIN jornadas j ON jp.jornada_id = j.id
-                 WHERE v.created_at >= date_trunc('month', CURRENT_DATE)
+                 JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+                 JOIN jornadas j ON jp.jornada_id = j.id
+                 JOIN periodos p ON j.periodo_id = p.id
+                 WHERE p.estado = 'Activo'
                  ${rol === "Lider" ? `AND j.zona_id = '${zona_id}'` : ""}
                 ) as ventas_mes,
 
                 -- 2. Fichas del Mes
                 (SELECT COUNT(*) 
                  FROM ventas v 
-                 LEFT JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-                 LEFT JOIN jornadas j ON jp.jornada_id = j.id
-                 WHERE v.created_at >= date_trunc('month', CURRENT_DATE)
+                 JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+                 JOIN jornadas j ON jp.jornada_id = j.id
+                 JOIN periodos p ON j.periodo_id = p.id
+                 WHERE p.estado = 'Activo'
                  ${rol === "Lider" ? `AND j.zona_id = '${zona_id}'` : ""}
                 ) as fichas_mes,
 
@@ -136,9 +138,10 @@ router.get("/planes", auth, async (req, res) => {
             SELECT pl.nombre, COUNT(v.id) as cantidad
             FROM ventas v
             JOIN planes pl ON v.plan_id = pl.id
-            LEFT JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-            LEFT JOIN jornadas j ON jp.jornada_id = j.id
-            WHERE v.created_at >= date_trunc('month', CURRENT_DATE)
+            JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+            JOIN jornadas j ON jp.jornada_id = j.id
+            JOIN periodos p ON j.periodo_id = p.id
+            WHERE p.estado = 'Activo'
         `;
     if (rol === "Lider") query += ` AND j.zona_id = '${zona_id}'`;
 
