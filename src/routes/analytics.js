@@ -30,44 +30,57 @@ router.get("/dashboard", auth, async (req, res) => {
     const { zona_id, rol } = req.user;
     const { startDate, endDate } = req.query;
 
-    const filter = buildDateFilter(startDate, endDate);
+    const isFiltered = startDate && endDate;
+    const globalParams = [];
 
+    // --- 1. CONFIG: Ventas & Fichas ---
     let ventasFichasWhereClause;
     let ventasFichasJoinPeriodos = "";
-    let ventasFichasParams = [];
 
-    if (filter.isDateRange) {
-      ventasFichasWhereClause = `j.fecha BETWEEN $1 AND $2`;
-      ventasFichasParams = [startDate, endDate];
+    if (isFiltered) {
+      // Index $1, $2
+      ventasFichasWhereClause = `j.fecha BETWEEN $${
+        globalParams.length + 1
+      } AND $${globalParams.length + 2}`;
+      globalParams.push(startDate, endDate);
     } else {
       ventasFichasWhereClause = `p.estado = 'Activo'`;
       ventasFichasJoinPeriodos = `JOIN periodos p ON j.periodo_id = p.id`;
     }
 
-    const zonaConditionVentasFichas =
-      rol === "Lider"
-        ? `AND j.zona_id = $${ventasFichasParams.length + 1}`
-        : "";
-    if (rol === "Lider") ventasFichasParams.push(zona_id);
+    let zonaConditionVentasFichas = "";
+    if (rol === "Lider") {
+      zonaConditionVentasFichas = `AND j.zona_id = $${globalParams.length + 1}`;
+      globalParams.push(zona_id);
+    }
 
+    // --- 2. CONFIG: Activos Hoy ---
+    // Note: Activos Hoy is always based on CURRENT_DATE, but might need Zona filter
+    let activosHoyZonaCondition = "";
+    if (rol === "Lider") {
+      activosHoyZonaCondition = `AND j.zona_id = $${globalParams.length + 1}`;
+      globalParams.push(zona_id);
+    }
+
+    // --- 3. CONFIG: Objetivo Global ---
     let objetivoWhereClause;
-    let objetivoParams = [];
 
-    if (filter.isDateRange) {
-      // For custom date range, sum objectives of periods that overlap with the range
-      objetivoWhereClause = `p.fecha_inicio <= $1 AND p.fecha_fin >= $2`;
-      objetivoParams = [endDate, startDate];
+    if (isFiltered) {
+      // Overlap logic: Start <= RangeEnd AND End >= RangeStart
+      objetivoWhereClause = `p.fecha_inicio <= $${
+        globalParams.length + 1
+      } AND p.fecha_fin >= $${globalParams.length + 2}`;
+      globalParams.push(endDate, startDate);
     } else {
-      // Default: Active Period
+      // Default: Active periods containing today
       objetivoWhereClause = `p.estado = 'Activo' AND CURRENT_DATE BETWEEN p.fecha_inicio AND p.fecha_fin`;
     }
 
-    const zonaConditionObjetivo =
-      rol === "Lider" ? `AND p.zona_id = $${objetivoParams.length + 1}` : "";
-    if (rol === "Lider") objetivoParams.push(zona_id);
-
-    const activosHoyZonaCondition = rol === "Lider" ? `AND j.zona_id = $1` : "";
-    const activosHoyParams = rol === "Lider" ? [zona_id] : [];
+    let zonaConditionObjetivo = "";
+    if (rol === "Lider") {
+      zonaConditionObjetivo = `AND p.zona_id = $${globalParams.length + 1}`;
+      globalParams.push(zona_id);
+    }
 
     const query = `
             SELECT
@@ -91,7 +104,7 @@ router.get("/dashboard", auth, async (req, res) => {
                  ${zonaConditionVentasFichas}
                 ) as fichas_mes,
 
-                -- 3. Promotores Activos HOY (Always Today regardless of filter)
+                -- 3. Promotores Activos HOY
                 (SELECT COUNT(DISTINCT jp.promotor_id)
                  FROM jornada_promotores jp
                  JOIN jornadas j ON jp.jornada_id = j.id
@@ -105,14 +118,12 @@ router.get("/dashboard", auth, async (req, res) => {
                  JOIN periodos p ON pp.periodo_id = p.id
                  WHERE ${objetivoWhereClause}
                  ${zonaConditionObjetivo}
+                 -- Evitar duplicar objetivos si un promotor está en el mismo periodo multiple veces (poco probable por diseño pero safeproof)
+                 -- Group by logic is not needed if we sum pp.objetivo directly assuming uniqueness in periodo_promotores
                 ) as objetivo_global
         `;
 
-    const result = await pool.query(query, [
-      ...ventasFichasParams,
-      ...activosHoyParams,
-      ...objetivoParams,
-    ]);
+    const result = await pool.query(query, globalParams);
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
