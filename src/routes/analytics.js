@@ -78,21 +78,21 @@ router.get("/ranking", auth, async (req, res) => {
                                                     END as avance_porcentaje,
                                                     pp.tipo_jornada,
                                                     z.nombre as nombre_zona
-                                                FROM promotores pr
-                                                JOIN periodo_promotores pp ON pp.promotor_id = pr.id
-                                                JOIN periodos p ON pp.periodo_id = p.id
-                                                LEFT JOIN jornada_promotores jp ON jp.promotor_id = pr.id
-                                                LEFT JOIN jornadas j ON (jp.jornada_id = j.id AND j.periodo_id = p.id)
+                                                FROM periodos p
+                                                JOIN periodo_promotores pp ON pp.periodo_id = p.id
+                                                JOIN promotores pr ON pp.promotor_id = pr.id
+                                                LEFT JOIN jornadas j ON j.periodo_id = p.id
+                                                LEFT JOIN jornada_promotores jp ON (jp.jornada_id = j.id AND jp.promotor_id = pr.id)
                                                 LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
                                                 LEFT JOIN zonas z ON p.zona_id = z.id
                                                 WHERE p.estado = 'Activo'
                                             `;
-                                    
-                                        if (rol === "Lider") {
-                                          query += ` AND p.zona_id = '${zona_id}'`;
-                                        }
-                                    
-                                        query += `
+
+    if (rol === "Lider") {
+      query += ` AND p.zona_id = '${zona_id}'`;
+    }
+
+    query += `
                                                 GROUP BY pr.id, pr.nombre_completo, pr.foto_url, pp.objetivo, pp.tipo_jornada, z.nombre
                                                 ORDER BY venta_real DESC
                                                 LIMIT 10
