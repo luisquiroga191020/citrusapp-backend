@@ -1,4 +1,3 @@
-```javascript
 const router = require("express").Router();
 const pool = require("../db");
 const auth = require("../middleware/auth");
@@ -46,7 +45,9 @@ router.get("/dashboard", auth, async (req, res) => {
     }
 
     const zonaConditionVentasFichas =
-      rol === "Lider" ? `AND j.zona_id = $${ventasFichasParams.length + 1}` : "";
+      rol === "Lider"
+        ? `AND j.zona_id = $${ventasFichasParams.length + 1}`
+        : "";
     if (rol === "Lider") ventasFichasParams.push(zona_id);
 
     let objetivoWhereClause;
@@ -65,8 +66,7 @@ router.get("/dashboard", auth, async (req, res) => {
       rol === "Lider" ? `AND p.zona_id = $${objetivoParams.length + 1}` : "";
     if (rol === "Lider") objetivoParams.push(zona_id);
 
-    const activosHoyZonaCondition =
-      rol === "Lider" ? `AND j.zona_id = $1` : "";
+    const activosHoyZonaCondition = rol === "Lider" ? `AND j.zona_id = $1` : "";
     const activosHoyParams = rol === "Lider" ? [zona_id] : [];
 
     const query = `
@@ -108,10 +108,11 @@ router.get("/dashboard", auth, async (req, res) => {
                 ) as objetivo_global
         `;
 
-    const result = await pool.query(
-      query,
-      [...ventasFichasParams, ...activosHoyParams, ...objetivoParams]
-    );
+    const result = await pool.query(query, [
+      ...ventasFichasParams,
+      ...activosHoyParams,
+      ...objetivoParams,
+    ]);
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
