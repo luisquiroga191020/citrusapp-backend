@@ -402,7 +402,7 @@ router.get(
       if (result.rows.length === 0) return res.json(null);
       const p = result.rows[0];
       const promRes = await pool.query(
-        `SELECT pp.promotor_id, pp.tipo_jornada, pp.objetivo, pr.nombre_completo, pr.codigo, pr.foto_url FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id WHERE pp.periodo_id = $1 ORDER BY pr.nombre_completo`,
+        `SELECT pp.promotor_id, pp.tipo_jornada, pp.objetivo, pr.nombre_completo, pr.codigo, pr.foto_url FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id WHERE pp.periodo_id = $1 AND pr.activo = true ORDER BY pr.nombre_completo`,
         [p.id]
       );
       res.json({ ...p, promotores: promRes.rows });
