@@ -151,6 +151,7 @@ router.get("/ranking", auth, async (req, res) => {
                 pr.foto_url,
                 COALESCE(MAX(pp.objetivo), 0) as objetivo,
                 COALESCE(SUM(v.monto), 0) as venta_real,
+                COUNT(v.id) as fichas,
                 (COALESCE(SUM(v.monto), 0) - COALESCE(MAX(pp.objetivo), 0)) as delta,
                 CASE
                     WHEN COALESCE(MAX(pp.objetivo), 0) > 0 THEN (COALESCE(SUM(v.monto), 0) / MAX(pp.objetivo)::float) * 100
@@ -187,6 +188,7 @@ router.get("/ranking", auth, async (req, res) => {
                 pr.foto_url,
                 pp.objetivo,
                 COALESCE(SUM(v.monto), 0) as venta_real,
+                COUNT(v.id) as fichas,
                 (COALESCE(SUM(v.monto), 0) - COALESCE(pp.objetivo, 0)) as delta,
                 CASE
                     WHEN pp.objetivo > 0 THEN (COALESCE(SUM(v.monto), 0) / pp.objetivo::float) * 100
