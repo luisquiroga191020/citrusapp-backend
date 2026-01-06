@@ -170,7 +170,6 @@ router.get("/ranking", auth, async (req, res) => {
             ${rol === "Lider" ? `AND p.zona_id = $3` : ""}
             GROUP BY pr.id, pr.nombre_completo, pr.foto_url
             ORDER BY venta_real DESC
-            LIMIT 10
          `;
       params = [startDate, endDate];
       if (rol === "Lider") params.push(zona_id);
@@ -206,7 +205,6 @@ router.get("/ranking", auth, async (req, res) => {
             WHERE ${whereClause}
             GROUP BY pr.id, pr.nombre_completo, pr.foto_url, pp.objetivo, pp.tipo_jornada, z.nombre
             ORDER BY venta_real DESC
-            LIMIT 10
         `;
     }
 
