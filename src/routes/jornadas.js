@@ -62,6 +62,7 @@ router.get(
             jp.id as jornada_promotor_id, 
             jp.promotor_id, 
             jp.stands_ids, -- Array de IDs
+            jp.tipo_novedad_id,
             pr.nombre_completo, 
             pr.foto_url, 
             pp.tipo_jornada,
@@ -141,8 +142,14 @@ router.post(
 
         // Guardamos el array de stands Y la zona del promotor en ese momento
         await client.query(
-          `INSERT INTO jornada_promotores (jornada_id, promotor_id, stands_ids, zona_id) VALUES ($1, $2, $3, $4)`,
-          [jRes.rows[0].id, a.promotor_id, a.stands_ids, promotor_zona_id]
+          `INSERT INTO jornada_promotores (jornada_id, promotor_id, stands_ids, zona_id, tipo_novedad_id) VALUES ($1, $2, $3, $4, $5)`,
+          [
+            jRes.rows[0].id,
+            a.promotor_id,
+            a.stands_ids,
+            promotor_zona_id,
+            a.tipo_novedad_id || null,
+          ]
         );
       }
       await client.query("COMMIT");
@@ -197,10 +204,10 @@ router.put(
       for (const asign of asignaciones) {
         if (actualesMap.has(asign.promotor_id)) {
           const jp_id = actualesMap.get(asign.promotor_id);
-          // Actualizamos solo stands_ids, NO la zona (preservamos el historial)
+          // Actualizamos solo stands_ids y tipo_novedad_id, NO la zona (preservamos el historial)
           await client.query(
-            "UPDATE jornada_promotores SET stands_ids = $1 WHERE id = $2",
-            [asign.stands_ids, jp_id]
+            "UPDATE jornada_promotores SET stands_ids = $1, tipo_novedad_id = $2 WHERE id = $3",
+            [asign.stands_ids, asign.tipo_novedad_id || null, jp_id]
           );
         } else {
           // Nuevo promotor agregado: obtener su zona actual
@@ -211,8 +218,14 @@ router.put(
           const promotor_zona_id = promotorZona.rows[0]?.zona_id || null;
 
           await client.query(
-            "INSERT INTO jornada_promotores (jornada_id, promotor_id, stands_ids, zona_id) VALUES ($1, $2, $3, $4)",
-            [id, asign.promotor_id, asign.stands_ids, promotor_zona_id]
+            "INSERT INTO jornada_promotores (jornada_id, promotor_id, stands_ids, zona_id, tipo_novedad_id) VALUES ($1, $2, $3, $4, $5)",
+            [
+              id,
+              asign.promotor_id,
+              asign.stands_ids,
+              promotor_zona_id,
+              asign.tipo_novedad_id || null,
+            ]
           );
         }
       }
