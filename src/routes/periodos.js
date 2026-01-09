@@ -238,15 +238,65 @@ router.get(
       const promotores = (
         await pool.query(
           `
-            SELECT pr.id, pr.nombre_completo, pr.foto_url, pp.tipo_jornada, pp.objetivo, 
-            COALESCE(SUM(v.monto), 0) as venta_real, COUNT(v.id) as cantidad_fichas,
-            (COALESCE(SUM(v.monto), 0) - pp.objetivo) as delta, 
-            CASE WHEN pp.objetivo > 0 THEN (COALESCE(SUM(v.monto), 0) / pp.objetivo::float) * 100 ELSE 0 END as avance
-            FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id 
+            SELECT 
+              pr.id, 
+              pr.nombre_completo, 
+              pr.foto_url, 
+              pp.tipo_jornada, 
+              
+              -- CÁLCULO DE OBJETIVO REAL
+              CASE 
+                WHEN p.dias_operativos > 0 THEN 
+                  (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                ELSE 
+                  pp.objetivo::float 
+              END as objetivo,
+
+              -- DATA REAL
+              COALESCE(SUM(v.monto), 0) as venta_real, 
+              COUNT(v.id) as cantidad_fichas,
+              
+              -- DELTA SOBRE OBJETIVO REAL
+              (COALESCE(SUM(v.monto), 0) - (
+                 CASE 
+                    WHEN p.dias_operativos > 0 THEN 
+                      (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                    ELSE 
+                      pp.objetivo::float 
+                  END
+              )) as delta, 
+              
+              -- AVANCE SOBRE OBJETIVO REAL
+              CASE 
+                WHEN (
+                  CASE 
+                    WHEN p.dias_operativos > 0 THEN 
+                      (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                    ELSE 
+                      pp.objetivo::float 
+                  END
+                ) > 0 THEN 
+                  (COALESCE(SUM(v.monto), 0) / (
+                     CASE 
+                        WHEN p.dias_operativos > 0 THEN 
+                          (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                        ELSE 
+                          pp.objetivo::float 
+                      END
+                  )) * 100 
+                ELSE 0 
+              END as avance
+
+            FROM periodo_promotores pp 
+            JOIN promotores pr ON pp.promotor_id = pr.id 
+            JOIN periodos p ON pp.periodo_id = p.id
             LEFT JOIN jornadas j ON (j.periodo_id = pp.periodo_id)
             LEFT JOIN jornada_promotores jp ON (jp.jornada_id = j.id AND jp.promotor_id = pp.promotor_id) 
+            LEFT JOIN tipo_novedad tn ON (jp.tipo_novedad_id = tn.id)
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-            WHERE pp.periodo_id = $1 GROUP BY pr.id, pp.id ORDER BY venta_real DESC
+            WHERE pp.periodo_id = $1 
+            GROUP BY pr.id, pp.id, p.dias_operativos 
+            ORDER BY venta_real DESC
         `,
           [id]
         )
