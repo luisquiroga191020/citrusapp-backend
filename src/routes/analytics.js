@@ -147,6 +147,7 @@ router.get("/ranking", auth, async (req, res) => {
       // which is an approximation if a promoter has multiple objectives in overlapping periods.
       query = `
             SELECT
+                pr.id,
                 pr.nombre_completo,
                 pr.foto_url,
                 COALESCE(MAX(pp.objetivo), 0) as objetivo,
@@ -183,6 +184,7 @@ router.get("/ranking", auth, async (req, res) => {
 
       query = `
             SELECT
+                pr.id,
                 pr.nombre_completo,
                 pr.foto_url,
                 
