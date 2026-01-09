@@ -24,7 +24,7 @@ app.use(express.json());
 app.use(cors());
 app.use(helmet());
 // If running behind a proxy (Render, Heroku, nginx), trust proxy headers so req.ip and protocol are correct
-app.set('trust proxy', true);
+app.set("trust proxy", true);
 
 // Auditoría: registrar todas las peticiones
 app.use(audit);
@@ -81,17 +81,17 @@ app.post("/auth/login", async (req, res) => {
         usuarioData.id,
         usuarioData.nombre_completo,
         usuarioData.rol,
-        'POST',
-        '/auth/login',
+        "POST",
+        "/auth/login",
         200,
         req.ip || null,
-        req.get('User-Agent') || null,
+        req.get("User-Agent") || null,
         null,
-        { message: 'login_success' },
+        { message: "login_success" },
       ]
     );
   } catch (e) {
-    console.error('Audit insert error on login', e.message);
+    console.error("Audit insert error on login", e.message);
   }
 
   res.json({
@@ -106,22 +106,25 @@ app.post("/auth/login", async (req, res) => {
 });
 
 // Logout (opcional): registra cierre de sesión
-app.post('/auth/logout', auth, async (req, res) => {
+app.post("/auth/logout", auth, async (req, res) => {
   try {
-    await pool.query(`INSERT INTO audits (user_id, username, rol, method, path, status, ip, user_agent, device_type, details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [
-      req.user?.id || null,
-      req.user?.nombre || null,
-      req.user?.rol || null,
-      'POST',
-      '/auth/logout',
-      200,
-      req.ip || null,
-      req.get('User-Agent') || null,
-      null,
-      { message: 'logout' }
-    ]);
+    await pool.query(
+      `INSERT INTO audits (user_id, username, rol, method, path, status, ip, user_agent, device_type, details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        req.user?.id || null,
+        req.user?.nombre || null,
+        req.user?.rol || null,
+        "POST",
+        "/auth/logout",
+        200,
+        req.ip || null,
+        req.get("User-Agent") || null,
+        null,
+        { message: "logout" },
+      ]
+    );
   } catch (e) {
-    console.error('Audit insert error on logout', e.message);
+    console.error("Audit insert error on logout", e.message);
   }
   res.json({ ok: true });
 });
@@ -129,14 +132,15 @@ app.post('/auth/logout', auth, async (req, res) => {
 // Verificar token y devolver usuario actualizado
 app.get("/auth/me", auth, async (req, res) => {
   try {
-    const user = await pool.query("SELECT id, email, nombre_completo, rol, activo, zona_id FROM usuarios WHERE id = $1", [
-      req.user.id,
-    ]);
+    const user = await pool.query(
+      "SELECT id, email, nombre_completo, rol, activo, zona_id FROM usuarios WHERE id = $1",
+      [req.user.id]
+    );
 
     if (user.rows.length === 0) {
       return res.status(404).json({ error: "Usuario no encontrado" });
     }
-    
+
     const usuarioData = user.rows[0];
 
     res.json({
@@ -148,7 +152,6 @@ app.get("/auth/me", auth, async (req, res) => {
         zona_id: usuarioData.zona_id,
       },
     });
-
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -185,7 +188,9 @@ app.use("/api/stands", standsRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/ia", iaRoutes);
 app.use("/api/planificador", planificadorRoutes);
-const auditsRoutes = require('./routes/audits');
-app.use('/api/audits', auditsRoutes);
+const tipoNovedadRoutes = require("./routes/tipo_novedad");
+app.use("/api/tipo-novedad", tipoNovedadRoutes);
+const auditsRoutes = require("./routes/audits");
+app.use("/api/audits", auditsRoutes);
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
