@@ -95,14 +95,17 @@ router.get(
               (SELECT string_agg(s.nombre, ', ') 
                FROM stands s 
                WHERE s.id = ANY(jp.stands_ids)) as stand_nombre,
+              tn.nombre as tipo_novedad,
               COUNT(v.id) as fichas,
               COALESCE(SUM(v.monto), 0) as venta_dia
             FROM jornadas j
             INNER JOIN jornada_promotores jp ON jp.jornada_id = j.id AND jp.promotor_id = $1
             LEFT JOIN zonas z ON z.id = jp.zona_id
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+            LEFT JOIN planificacion_visual pv ON pv.fecha = j.fecha AND pv.promotor_id = jp.promotor_id AND pv.zona_id = jp.zona_id
+            LEFT JOIN tipo_novedad tn ON tn.id = pv.tipo_novedad_id
             WHERE j.periodo_id = $2
-            GROUP BY j.id, j.fecha, jp.id, z.nombre, jp.stands_ids
+            GROUP BY j.id, j.fecha, jp.id, z.nombre, jp.stands_ids, tn.nombre
             ORDER BY j.fecha DESC
           `;
           const jornadasResult = await pool.query(jornadasQuery, [
