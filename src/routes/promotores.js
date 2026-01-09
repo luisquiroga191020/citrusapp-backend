@@ -51,7 +51,8 @@ router.get(
               p.id as periodo_id,
               p.nombre as periodo,
               pp.objetivo,
-              p.fecha_inicio
+              p.fecha_inicio,
+              p.dias_operativos
             FROM jornada_promotores jp
             JOIN jornadas j ON jp.jornada_id = j.id
             JOIN periodos p ON j.periodo_id = p.id
@@ -80,10 +81,40 @@ router.get(
             periodo.periodo_id,
           ]);
 
+          // Calcular días no operativos (Novedades con operativo = 'NO')
+          const noOperativosQuery = `
+            SELECT COUNT(*) as dias
+            FROM jornada_promotores jp
+            JOIN jornadas j ON jp.jornada_id = j.id
+            JOIN tipo_novedad tn ON jp.tipo_novedad_id = tn.id
+            WHERE jp.promotor_id = $1 
+              AND j.periodo_id = $2
+              AND tn.operativo = 'NO'
+          `;
+          const noOperativosResult = await pool.query(noOperativosQuery, [
+            req.params.id,
+            periodo.periodo_id,
+          ]);
+          const dias_no_operativos = parseInt(
+            noOperativosResult.rows[0].dias || 0
+          );
+          const dias_operativos_periodo = periodo.dias_operativos || 0;
+
+          let objetivo = periodo.objetivo || 0;
+          let objetivo_real = objetivo;
+
+          if (dias_operativos_periodo > 0) {
+            const dias_efectivos = Math.max(
+              0,
+              dias_operativos_periodo - dias_no_operativos
+            );
+            objetivo_real =
+              (objetivo / dias_operativos_periodo) * dias_efectivos;
+          }
+
           const venta_real = totalesResult.rows[0].venta_real;
           const total_fichas = totalesResult.rows[0].total_fichas;
-          const objetivo = periodo.objetivo || 0;
-          const delta = venta_real - objetivo;
+          const delta = venta_real - objetivo_real; // Delta sobre objetivo real
 
           // Obtener jornadas para este periodo
           const jornadasQuery = `
@@ -102,8 +133,7 @@ router.get(
             INNER JOIN jornada_promotores jp ON jp.jornada_id = j.id AND jp.promotor_id = $1
             LEFT JOIN zonas z ON z.id = jp.zona_id
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-            LEFT JOIN planificacion_visual pv ON pv.fecha = j.fecha AND pv.promotor_id = jp.promotor_id AND pv.zona_id = jp.zona_id
-            LEFT JOIN tipo_novedad tn ON tn.id = pv.tipo_novedad_id
+            LEFT JOIN tipo_novedad tn ON tn.id = jp.tipo_novedad_id
             WHERE j.periodo_id = $2
             GROUP BY j.id, j.fecha, jp.id, z.nombre, jp.stands_ids, tn.nombre
             ORDER BY j.fecha DESC
@@ -145,6 +175,9 @@ router.get(
             periodo_id: periodo.periodo_id,
             periodo: periodo.periodo,
             objetivo: objetivo,
+            objetivo_real: objetivo_real, // Nuevo campo
+            dias_operativos: dias_operativos_periodo,
+            dias_no_operativos: dias_no_operativos,
             venta_real: venta_real,
             delta: delta,
             total_fichas: total_fichas,
