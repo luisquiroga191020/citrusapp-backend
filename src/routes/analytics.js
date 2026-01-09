@@ -185,14 +185,49 @@ router.get("/ranking", auth, async (req, res) => {
             SELECT
                 pr.nombre_completo,
                 pr.foto_url,
-                pp.objetivo,
+                
+                -- CÁLCULO OBJETIVO REAL
+                CASE 
+                    WHEN p.dias_operativos > 0 THEN 
+                      (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                    ELSE 
+                      pp.objetivo::float 
+                END as objetivo,
+
                 COALESCE(SUM(v.monto), 0) as venta_real,
                 COUNT(v.id) as fichas,
-                (COALESCE(SUM(v.monto), 0) - COALESCE(pp.objetivo, 0)) as delta,
+                
+                -- DELTA SOBRE OBJETIVO REAL
+                (COALESCE(SUM(v.monto), 0) - (
+                    CASE 
+                        WHEN p.dias_operativos > 0 THEN 
+                          (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                        ELSE 
+                          pp.objetivo::float 
+                    END
+                )) as delta,
+                
+                -- AVANCE SOBRE OBJETIVO REAL
                 CASE
-                    WHEN pp.objetivo > 0 THEN (COALESCE(SUM(v.monto), 0) / pp.objetivo::float) * 100
+                    WHEN (
+                        CASE 
+                            WHEN p.dias_operativos > 0 THEN 
+                              (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                            ELSE 
+                              pp.objetivo::float 
+                        END
+                    ) > 0 THEN 
+                        (COALESCE(SUM(v.monto), 0) / (
+                            CASE 
+                                WHEN p.dias_operativos > 0 THEN 
+                                  (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                                ELSE 
+                                  pp.objetivo::float 
+                            END
+                        )::float) * 100
                     ELSE 0
                 END as avance_porcentaje,
+                
                 pp.tipo_jornada,
                 z.nombre as nombre_zona
             FROM periodos p
@@ -200,10 +235,11 @@ router.get("/ranking", auth, async (req, res) => {
             JOIN promotores pr ON pp.promotor_id = pr.id
             LEFT JOIN jornadas j ON j.periodo_id = p.id
             LEFT JOIN jornada_promotores jp ON (jp.jornada_id = j.id AND jp.promotor_id = pr.id)
+            LEFT JOIN tipo_novedad tn ON jp.tipo_novedad_id = tn.id
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
             LEFT JOIN zonas z ON p.zona_id = z.id
             WHERE ${whereClause}
-            GROUP BY pr.id, pr.nombre_completo, pr.foto_url, pp.objetivo, pp.tipo_jornada, z.nombre
+            GROUP BY pr.id, pr.nombre_completo, pr.foto_url, pp.objetivo, pp.tipo_jornada, z.nombre, p.dias_operativos
             ORDER BY venta_real DESC
         `;
     }
