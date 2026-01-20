@@ -198,6 +198,7 @@ router.get("/ranking", auth, async (req, res) => {
 
                 COALESCE(SUM(v.monto), 0) as venta_real,
                 COUNT(v.id) as fichas,
+                COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO') as dias_no_operativos,
                 
                 -- DELTA SOBRE OBJETIVO REAL
                 (COALESCE(SUM(v.monto), 0) - (
