@@ -105,7 +105,7 @@ router.get(
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
-  }
+  },
 );
 
 // ================================================================
@@ -121,7 +121,7 @@ router.get(
       // A. INFO PERIODO
       const periodoRes = await pool.query(
         `SELECT p.*, z.nombre as zona_nombre FROM periodos p JOIN zonas z ON p.zona_id = z.id WHERE p.id = $1`,
-        [id]
+        [id],
       );
       if (periodoRes.rows.length === 0)
         return res.status(404).json({ error: "Periodo no encontrado" });
@@ -184,7 +184,7 @@ router.get(
       const statsRes = await pool.query(statsQuery, [id]);
 
       const fullStats = statsRes.rows.find(
-        (r) => r.tipo_jornada === "Full Time"
+        (r) => r.tipo_jornada === "Full Time",
       ) || {
         venta_total_absoluta: 0,
         min: 0,
@@ -195,7 +195,7 @@ router.get(
         raw_data: [],
       };
       const partStats = statsRes.rows.find(
-        (r) => r.tipo_jornada === "Part Time"
+        (r) => r.tipo_jornada === "Part Time",
       ) || {
         venta_total_absoluta: 0,
         min: 0,
@@ -208,7 +208,7 @@ router.get(
 
       const mannWhitney = calculateMannWhitney(
         fullStats.raw_data || [],
-        partStats.raw_data || []
+        partStats.raw_data || [],
       );
 
       const segmentacion = {
@@ -255,6 +255,7 @@ router.get(
               -- DATA REAL
               COALESCE(SUM(v.monto), 0) as venta_real, 
               COUNT(v.id) as cantidad_fichas,
+              COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO') as dias_no_operativos,
               
               -- DELTA SOBRE OBJETIVO REAL
               (COALESCE(SUM(v.monto), 0) - (
@@ -298,7 +299,7 @@ router.get(
             GROUP BY pr.id, pp.id, p.dias_operativos 
             ORDER BY venta_real DESC
         `,
-          [id]
+          [id],
         )
       ).rows;
 
@@ -306,38 +307,38 @@ router.get(
       const topPlan = (
         await pool.query(
           `SELECT p.nombre, COUNT(*) as cantidad, SUM(v.monto) as monto FROM ventas v JOIN planes p ON v.plan_id = p.id JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY p.nombre ORDER BY cantidad DESC LIMIT 1`,
-          [id]
+          [id],
         )
       ).rows[0];
       const topPago = (
         await pool.query(
           `SELECT fp.nombre, COUNT(*) as cantidad FROM ventas v JOIN formas_pago fp ON v.forma_pago_id = fp.id JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY fp.nombre ORDER BY cantidad DESC LIMIT 1`,
-          [id]
+          [id],
         )
       ).rows[0];
       const semanal = (
         await pool.query(
           `SELECT TO_CHAR(j.fecha, 'Day') as nombre_dia, SUM(v.monto) as venta, COUNT(v.id) as fichas FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY 1, EXTRACT(ISODOW FROM j.fecha) ORDER BY EXTRACT(ISODOW FROM j.fecha)`,
-          [id]
+          [id],
         )
       ).rows;
       const diario = (
         await pool.query(
           `SELECT TO_CHAR(j.fecha, 'YYYY-MM-DD') as fecha, COALESCE(SUM(v.monto), 0) as total, COUNT(v.id) as fichas FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY j.fecha ORDER BY j.fecha ASC`,
-          [id]
+          [id],
         )
       ).rows;
 
       // G. COMPARATIVA
       const prevPeriodo = await pool.query(
         `SELECT id, nombre FROM periodos WHERE zona_id = $1 AND fecha_inicio < $2 ORDER BY fecha_inicio DESC LIMIT 1`,
-        [periodo.zona_id, periodo.fecha_inicio]
+        [periodo.zona_id, periodo.fecha_inicio],
       );
       let comparativa = { existe: false, diferencia: 0 };
       if (prevPeriodo.rows.length > 0) {
         const vPrev = await pool.query(
           `SELECT COALESCE(SUM(v.monto), 0) as total FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1`,
-          [prevPeriodo.rows[0].id]
+          [prevPeriodo.rows[0].id],
         );
         const actual = Number(totales.total_ventas);
         const anterior = Number(vPrev.rows[0].total);
@@ -353,7 +354,7 @@ router.get(
       // --- RESPUESTA ---
       const metaGlobal = promotores.reduce(
         (sum, p) => sum + Number(p.objetivo),
-        0
+        0,
       );
       const diasCargados = jornadas.length;
 
@@ -398,20 +399,20 @@ router.get(
       console.error(err);
       res.status(500).json({ error: err.message });
     }
-  }
+  },
 );
 
 async function getCountPromotores(periodoId, tipo) {
   const res = await pool.query(
     "SELECT COUNT(*) FROM periodo_promotores WHERE periodo_id = $1 AND tipo_jornada = $2",
-    [periodoId, tipo]
+    [periodoId, tipo],
   );
   return parseInt(res.rows[0].count);
 }
 async function getCountFichas(periodoId, tipo) {
   const res = await pool.query(
     `SELECT COUNT(v.id) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN periodo_promotores pp ON (pp.promotor_id = jp.promotor_id AND pp.periodo_id = $1) WHERE pp.tipo_jornada = $2`,
-    [periodoId, tipo]
+    [periodoId, tipo],
   );
   return parseInt(res.rows[0].count);
 }
@@ -430,13 +431,13 @@ router.get(
         return res.status(404).json({ error: "No existe" });
       const promRes = await pool.query(
         `SELECT pp.promotor_id as id, pp.tipo_jornada, pp.objetivo, pr.nombre_completo FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id WHERE pp.periodo_id = $1`,
-        [req.params.id]
+        [req.params.id],
       );
       res.json({ ...pRes.rows[0], promotores: promRes.rows });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
-  }
+  },
 );
 
 router.get(
@@ -447,19 +448,19 @@ router.get(
     try {
       const result = await pool.query(
         `SELECT * FROM periodos WHERE zona_id = $1 AND estado = 'Activo' LIMIT 1`,
-        [req.params.zona_id]
+        [req.params.zona_id],
       );
       if (result.rows.length === 0) return res.json(null);
       const p = result.rows[0];
       const promRes = await pool.query(
         `SELECT pp.promotor_id, pp.tipo_jornada, pp.objetivo, pr.nombre_completo, pr.codigo, pr.foto_url FROM periodo_promotores pp JOIN promotores pr ON pp.promotor_id = pr.id WHERE pp.periodo_id = $1 AND pr.activo = true ORDER BY pr.nombre_completo`,
-        [p.id]
+        [p.id],
       );
       res.json({ ...p, promotores: promRes.rows });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
-  }
+  },
 );
 
 router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
@@ -480,14 +481,14 @@ router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
     if (estado === "Activo") await checkPeriodoActivo(zona_id);
     const periodRes = await client.query(
       `INSERT INTO periodos (nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado]
+      [nombre, zona_id, fecha_inicio, fecha_fin, dias_operativos, estado],
     );
     const pid = periodRes.rows[0].id;
     if (promotores) {
       for (const p of promotores) {
         await client.query(
           `INSERT INTO periodo_promotores (periodo_id, promotor_id, tipo_jornada, objetivo) VALUES ($1, $2, $3, $4)`,
-          [pid, p.id, p.tipo_jornada, p.objetivo]
+          [pid, p.id, p.tipo_jornada, p.objetivo],
         );
       }
     }
@@ -525,7 +526,7 @@ router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
         dias_operativos,
         estado,
         req.params.id,
-      ]
+      ],
     );
     await client.query("DELETE FROM periodo_promotores WHERE periodo_id = $1", [
       req.params.id,
@@ -534,7 +535,7 @@ router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
       for (const p of promotores) {
         await client.query(
           `INSERT INTO periodo_promotores (periodo_id, promotor_id, tipo_jornada, objetivo) VALUES ($1, $2, $3, $4)`,
-          [req.params.id, p.id, p.tipo_jornada, p.objetivo]
+          [req.params.id, p.id, p.tipo_jornada, p.objetivo],
         );
       }
     }
