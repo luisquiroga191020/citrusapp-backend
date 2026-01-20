@@ -359,7 +359,7 @@ router.get(
       const diasCargados = jornadas.length;
 
       res.json({
-        info: periodo,
+        info: { ...periodo, dias_cargados: diasCargados },
         kpis: {
           ...totales,
           meta_global: metaGlobal,
