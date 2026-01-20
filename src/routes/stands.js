@@ -150,8 +150,48 @@ router.get(
       }
 
       const stand = standRes.rows[0];
+      const { periodo_id } = req.query;
 
-      // Obtener jornadas con totales DEL PERIODO ACTIVO
+      // 1. Identificar el periodo a consultar
+      let targetPeriodoId = periodo_id;
+      let periodoInfo = null;
+
+      if (!targetPeriodoId) {
+        // Buscar el periodo activo por defecto
+        const activeRes = await pool.query(
+          `SELECT id, nombre FROM periodos WHERE zona_id = $1 AND estado = 'Activo' LIMIT 1`,
+          [stand.zona_id],
+        );
+        if (activeRes.rows.length > 0) {
+          targetPeriodoId = activeRes.rows[0].id;
+          periodoInfo = activeRes.rows[0];
+        }
+      } else {
+        // Buscar info del periodo solicitado
+        const reqPeriodoRes = await pool.query(
+          `SELECT id, nombre FROM periodos WHERE id = $1`,
+          [targetPeriodoId],
+        );
+        periodoInfo = reqPeriodoRes.rows[0] || null;
+      }
+
+      // Si no hay periodo (ni activo ni solicitado), devolvemos vacíos o error suave
+      if (!targetPeriodoId) {
+        // Obtener lista de periodos de todas formas para el selector
+        const listaPeriodos = await pool.query(
+          `SELECT id, nombre, estado FROM periodos WHERE zona_id = $1 ORDER BY created_at DESC`,
+          [stand.zona_id],
+        );
+        return res.json({
+          stand,
+          periodo_activo: null,
+          periodos: listaPeriodos.rows,
+          jornadas: [],
+          totales: { total_ventas: 0, total_fichas: 0, total_jornadas: 0 },
+        });
+      }
+
+      // Obtener jornadas con totales del periodo objetivo
       const jornadasRes = await pool.query(
         `SELECT 
         j.id as jornada_id,
@@ -162,10 +202,10 @@ router.get(
       JOIN jornada_promotores jp ON jp.jornada_id = j.id
       LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
       WHERE $1 = ANY(jp.stands_ids)
-        AND j.periodo_id IN (SELECT id FROM periodos WHERE zona_id = $2 AND estado = 'Activo')
+        AND j.periodo_id = $2
       GROUP BY j.id, j.fecha
       ORDER BY j.fecha DESC`,
-        [id, stand.zona_id],
+        [id, targetPeriodoId],
       );
 
       // Para cada jornada, obtener promotores
@@ -225,7 +265,7 @@ router.get(
         }),
       );
 
-      // Calcular totales generales DEL PERIODO ACTIVO
+      // Calcular totales generales del periodo objetivo
       const totalesRes = await pool.query(
         `SELECT 
         COALESCE(SUM(v.monto), 0) as total_ventas,
@@ -235,19 +275,20 @@ router.get(
       JOIN jornada_promotores jp ON jp.jornada_id = j.id
       LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
       WHERE $1 = ANY(jp.stands_ids)
-        AND j.periodo_id IN (SELECT id FROM periodos WHERE zona_id = $2 AND estado = 'Activo')`,
-        [id, stand.zona_id],
+        AND j.periodo_id = $2`,
+        [id, targetPeriodoId],
       );
 
-      // Obtener nombre del periodo activo para el header
-      const periodoActivoRes = await pool.query(
-        `SELECT nombre FROM periodos WHERE zona_id = $1 AND estado = 'Activo' LIMIT 1`,
+      // Obtener lista completa de periodos para el selector
+      const listaPeriodos = await pool.query(
+        `SELECT id, nombre, estado FROM periodos WHERE zona_id = $1 ORDER BY created_at DESC`,
         [stand.zona_id],
       );
 
       res.json({
         stand,
-        periodo_activo: periodoActivoRes.rows[0]?.nombre || null,
+        periodo_actual: periodoInfo,
+        periodos: listaPeriodos.rows,
         jornadas,
         totales: totalesRes.rows[0],
       });
