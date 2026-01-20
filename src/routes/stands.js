@@ -160,9 +160,8 @@ router.get(
         COUNT(v.id) as total_fichas
       FROM jornadas j
       JOIN jornada_promotores jp ON jp.jornada_id = j.id
-      JOIN jornada_promotor_stands jps ON jps.jornada_promotor_id = jp.id
       LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-      WHERE jps.stand_id = $1
+      WHERE $1 = ANY(jp.stands_ids)
       GROUP BY j.id, j.fecha
       ORDER BY j.fecha DESC`,
         [id],
@@ -180,9 +179,8 @@ router.get(
             COUNT(v.id) as fichas
           FROM jornada_promotores jp
           JOIN promotores pr ON pr.id = jp.promotor_id
-          JOIN jornada_promotor_stands jps ON jps.jornada_promotor_id = jp.id
           LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-          WHERE jp.jornada_id = $1 AND jps.stand_id = $2
+          WHERE jp.jornada_id = $1 AND $2 = ANY(jp.stands_ids)
           GROUP BY jp.promotor_id, pr.nombre_completo, pr.foto_url
           ORDER BY pr.nombre_completo`,
             [jornada.jornada_id, id],
@@ -203,12 +201,11 @@ router.get(
                 fp.tipo as forma_pago_tipo
               FROM ventas v
               JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
-              JOIN jornada_promotor_stands jps ON jps.jornada_promotor_id = jp.id
               JOIN planes p ON v.plan_id = p.id
               JOIN formas_pago fp ON v.forma_pago_id = fp.id
               WHERE jp.jornada_id = $1 
                 AND jp.promotor_id = $2 
-                AND jps.stand_id = $3
+                AND $3 = ANY(jp.stands_ids)
               ORDER BY v.created_at ASC`,
                 [jornada.jornada_id, promotor.promotor_id, id],
               );
@@ -235,9 +232,8 @@ router.get(
         COUNT(DISTINCT j.id) as total_jornadas
       FROM jornadas j
       JOIN jornada_promotores jp ON jp.jornada_id = j.id
-      JOIN jornada_promotor_stands jps ON jps.jornada_promotor_id = jp.id
       LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
-      WHERE jps.stand_id = $1`,
+      WHERE $1 = ANY(jp.stands_ids)`,
         [id],
       );
 
