@@ -11,13 +11,13 @@ router.get(
   async (req, res) => {
     try {
       const result = await pool.query(
-        "SELECT p.*, z.nombre as zona_nombre FROM promotores p LEFT JOIN zonas z ON p.zona_id = z.id ORDER BY p.activo DESC, p.nombre_completo"
+        "SELECT p.*, z.nombre as zona_nombre FROM promotores p LEFT JOIN zonas z ON p.zona_id = z.id ORDER BY p.activo DESC, p.nombre_completo",
       );
       res.json(result.rows);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
-  }
+  },
 );
 
 // Listar por Zona
@@ -29,13 +29,13 @@ router.get(
     try {
       const result = await pool.query(
         "SELECT * FROM promotores WHERE zona_id = $1 AND activo = true ORDER BY nombre_completo",
-        [req.params.zona_id]
+        [req.params.zona_id],
       );
       res.json(result.rows);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
-  }
+  },
 );
 
 // PERFORMANCE HISTÓRICO
@@ -50,6 +50,7 @@ router.get(
             SELECT DISTINCT
               p.id as periodo_id,
               p.nombre as periodo,
+              p.estado,
               pp.objetivo,
               p.fecha_inicio,
               p.dias_operativos
@@ -96,7 +97,7 @@ router.get(
             periodo.periodo_id,
           ]);
           const dias_no_operativos = parseInt(
-            noOperativosResult.rows[0].dias || 0
+            noOperativosResult.rows[0].dias || 0,
           );
           const dias_operativos_periodo = periodo.dias_operativos || 0;
 
@@ -106,7 +107,7 @@ router.get(
           if (dias_operativos_periodo > 0) {
             const dias_efectivos = Math.max(
               0,
-              dias_operativos_periodo - dias_no_operativos
+              dias_operativos_periodo - dias_no_operativos,
             );
             objetivo_real =
               (objetivo / dias_operativos_periodo) * dias_efectivos;
@@ -168,12 +169,13 @@ router.get(
                 ...jornada,
                 ventas: ventasResult.rows,
               };
-            })
+            }),
           );
 
           return {
             periodo_id: periodo.periodo_id,
             periodo: periodo.periodo,
+            estado: periodo.estado,
             objetivo: objetivo,
             objetivo_real: objetivo_real, // Nuevo campo
             dias_operativos: dias_operativos_periodo,
@@ -183,14 +185,14 @@ router.get(
             total_fichas: total_fichas,
             jornadas: jornadasConVentas,
           };
-        })
+        }),
       );
 
       res.json(periodosConJornadas);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
-  }
+  },
 );
 
 // Crear
@@ -206,7 +208,7 @@ router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
   try {
     await pool.query(
       "INSERT INTO promotores (codigo, nombre_completo, foto_url, zona_id, objetivo_base, tipo_jornada, activo) VALUES ($1, $2, $3, $4, $5, $6, true)",
-      [codigo, nombre_completo, foto_url, zona_id, objetivo_base, tipo_jornada]
+      [codigo, nombre_completo, foto_url, zona_id, objetivo_base, tipo_jornada],
     );
     res.json({ message: "Creado" });
   } catch (err) {
@@ -244,7 +246,7 @@ router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
           objetivo_base,
           tipo_jornada,
           req.params.id,
-        ]
+        ],
       );
     }
     res.json({ message: "Actualizado" });
