@@ -179,7 +179,7 @@ router.get(
       if (!targetPeriodoId) {
         // Obtener lista de periodos de todas formas para el selector
         const listaPeriodos = await pool.query(
-          `SELECT id, nombre, estado FROM periodos WHERE zona_id = $1 ORDER BY created_at DESC`,
+          `SELECT id, nombre, estado FROM periodos WHERE zona_id = $1 ORDER BY fecha_inicio DESC`,
           [stand.zona_id],
         );
         return res.json({
@@ -281,7 +281,7 @@ router.get(
 
       // Obtener lista completa de periodos para el selector
       const listaPeriodos = await pool.query(
-        `SELECT id, nombre, estado FROM periodos WHERE zona_id = $1 ORDER BY created_at DESC`,
+        `SELECT id, nombre, estado FROM periodos WHERE zona_id = $1 ORDER BY fecha_inicio DESC`,
         [stand.zona_id],
       );
 
