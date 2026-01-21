@@ -329,4 +329,22 @@ router.delete(
   },
 );
 
+router.put(
+  "/promotores/:jp_id/novedad",
+  auth,
+  verifyRole(["Administrador"]),
+  async (req, res) => {
+    const { tipo_novedad_id } = req.body;
+    try {
+      await pool.query(
+        "UPDATE jornada_promotores SET tipo_novedad_id = $1 WHERE id = $2",
+        [tipo_novedad_id || null, req.params.jp_id],
+      );
+      res.json({ message: "Novedad actualizada" });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
+
 module.exports = router;
