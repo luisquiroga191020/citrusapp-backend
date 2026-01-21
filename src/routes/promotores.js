@@ -53,6 +53,7 @@ router.get(
               p.estado,
               pp.objetivo,
               p.fecha_inicio,
+              p.fecha_fin,
               p.dias_operativos
             FROM jornada_promotores jp
             JOIN jornadas j ON jp.jornada_id = j.id
@@ -186,6 +187,7 @@ router.get(
             objetivo_real: objetivo_real, // Nuevo campo
             dias_operativos: dias_operativos_periodo,
             dias_no_operativos: dias_no_operativos,
+            fecha_fin: periodo.fecha_fin,
             venta_real: venta_real,
             venta_planillada: venta_planillada,
             delta: delta,

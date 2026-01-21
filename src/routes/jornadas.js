@@ -17,7 +17,7 @@ router.get(
                 z.nombre as zona_nombre, 
                 p.nombre as periodo_nombre,
                 u.nombre_completo as creador,
-                (SELECT COALESCE(SUM(v.monto), 0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as total_ventas,
+                (SELECT COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as total_ventas,
                 (SELECT COUNT(*) FROM jornada_promotores jp WHERE jp.jornada_id = j.id) as promotores_activos,
                 (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as total_fichas
             FROM jornadas j
@@ -72,7 +72,10 @@ router.get(
              FROM stands s 
              WHERE s.id = ANY(jp.stands_ids)) as stand_nombre,
              
-            (SELECT COALESCE(SUM(monto),0) FROM ventas v WHERE v.jornada_promotor_id = jp.id) as venta_hoy,
+            (SELECT COALESCE(SUM(monto) FILTER (WHERE estado IN ('CARGADO', 'PENDIENTE')), 0) 
+             FROM ventas v WHERE v.jornada_promotor_id = jp.id) as venta_hoy,
+            (SELECT COALESCE(SUM(monto), 0) 
+             FROM ventas v WHERE v.jornada_promotor_id = jp.id) as venta_planillada_hoy,
             (SELECT COUNT(*)::int FROM ventas v WHERE v.jornada_promotor_id = jp.id) as fichas_hoy
        FROM jornada_promotores jp
        JOIN promotores pr ON jp.promotor_id = pr.id
