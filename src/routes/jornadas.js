@@ -36,7 +36,7 @@ router.get(
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
-  }
+  },
 );
 
 // 2. DETALLE JORNADA
@@ -50,7 +50,7 @@ router.get(
         `SELECT j.*, z.nombre as zona_nombre, p.nombre as periodo_nombre 
        FROM jornadas j JOIN zonas z ON j.zona_id = z.id JOIN periodos p ON j.periodo_id = p.id 
        WHERE j.id = $1`,
-        [req.params.id]
+        [req.params.id],
       );
 
       if (cabecera.rows.length === 0)
@@ -80,7 +80,7 @@ router.get(
        LEFT JOIN periodo_promotores pp ON (pp.periodo_id = j.periodo_id AND pp.promotor_id = jp.promotor_id)
        WHERE jp.jornada_id = $1 
        ORDER BY pr.nombre_completo`,
-        [req.params.id]
+        [req.params.id],
       );
 
       const ventas = await pool.query(
@@ -91,7 +91,7 @@ router.get(
        JOIN planes pl ON v.plan_id = pl.id
        JOIN formas_pago fp ON v.forma_pago_id = fp.id
        WHERE jp.jornada_id = $1 ORDER BY v.created_at DESC`,
-        [req.params.id]
+        [req.params.id],
       );
 
       res.json({
@@ -102,7 +102,7 @@ router.get(
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
-  }
+  },
 );
 
 // 3. CREAR JORNADA
@@ -122,21 +122,21 @@ router.post(
 
       const check = await client.query(
         `SELECT id FROM jornadas WHERE zona_id=$1 AND fecha=$2`,
-        [zona_id, fecha]
+        [zona_id, fecha],
       );
       if (check.rows.length > 0)
         throw new Error("Ya existe una jornada para esta fecha.");
 
       const jRes = await client.query(
         `INSERT INTO jornadas (fecha, periodo_id, zona_id, created_by) VALUES ($1, $2, $3, $4) RETURNING id`,
-        [fecha, periodo_id, zona_id, req.user.id]
+        [fecha, periodo_id, zona_id, req.user.id],
       );
 
       for (const a of asignaciones) {
         // Obtener la zona actual del promotor para guardarla como snapshot histórico
         const promotorZona = await client.query(
           `SELECT zona_id FROM promotores WHERE id = $1`,
-          [a.promotor_id]
+          [a.promotor_id],
         );
         const promotor_zona_id = promotorZona.rows[0]?.zona_id || null;
 
@@ -149,7 +149,7 @@ router.post(
             a.stands_ids,
             promotor_zona_id,
             a.tipo_novedad_id || null,
-          ]
+          ],
         );
       }
       await client.query("COMMIT");
@@ -160,7 +160,7 @@ router.post(
     } finally {
       client.release();
     }
-  }
+  },
 );
 
 // 4. EDITAR JORNADA
@@ -182,13 +182,13 @@ router.put(
 
       const actualesRes = await client.query(
         "SELECT promotor_id, id FROM jornada_promotores WHERE jornada_id = $1",
-        [id]
+        [id],
       );
       const actualesMap = new Map(
-        actualesRes.rows.map((r) => [r.promotor_id, r.id])
+        actualesRes.rows.map((r) => [r.promotor_id, r.id]),
       );
       const nuevosPromotoresIds = new Set(
-        asignaciones.map((a) => a.promotor_id)
+        asignaciones.map((a) => a.promotor_id),
       );
 
       // Borrar removidos
@@ -207,13 +207,13 @@ router.put(
           // Actualizamos solo stands_ids y tipo_novedad_id, NO la zona (preservamos el historial)
           await client.query(
             "UPDATE jornada_promotores SET stands_ids = $1, tipo_novedad_id = $2 WHERE id = $3",
-            [asign.stands_ids, asign.tipo_novedad_id || null, jp_id]
+            [asign.stands_ids, asign.tipo_novedad_id || null, jp_id],
           );
         } else {
           // Nuevo promotor agregado: obtener su zona actual
           const promotorZona = await client.query(
             `SELECT zona_id FROM promotores WHERE id = $1`,
-            [asign.promotor_id]
+            [asign.promotor_id],
           );
           const promotor_zona_id = promotorZona.rows[0]?.zona_id || null;
 
@@ -225,7 +225,7 @@ router.put(
               asign.stands_ids,
               promotor_zona_id,
               asign.tipo_novedad_id || null,
-            ]
+            ],
           );
         }
       }
@@ -238,7 +238,7 @@ router.put(
     } finally {
       client.release();
     }
-  }
+  },
 );
 
 router.post(
@@ -256,7 +256,7 @@ router.post(
     } = req.body;
     try {
       await pool.query(
-        `INSERT INTO ventas (jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha, tipo) VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO ventas (jornada_promotor_id, plan_id, forma_pago_id, monto, codigo_ficha, tipo, estado) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           jornada_promotor_id,
           plan_id,
@@ -264,13 +264,14 @@ router.post(
           monto,
           codigo_ficha,
           tipo || "individual",
-        ]
+          "CARGADO",
+        ],
       );
       res.json({ message: "Registrada" });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
-  }
+  },
 );
 
 router.put(
@@ -278,24 +279,40 @@ router.put(
   auth,
   verifyRole(["Administrador", "Lider"]),
   async (req, res) => {
-    const { plan_id, forma_pago_id, monto, codigo_ficha, tipo } = req.body;
+    const { plan_id, forma_pago_id, monto, codigo_ficha, tipo, estado } =
+      req.body;
     try {
-      await pool.query(
-        `UPDATE ventas SET plan_id=$1, forma_pago_id=$2, monto=$3, codigo_ficha=$4, tipo=$5 WHERE id=$6`,
-        [
-          plan_id,
-          forma_pago_id,
-          monto,
-          codigo_ficha,
-          tipo || "individual",
-          req.params.id,
-        ]
-      );
+      if (req.user.rol === "Administrador") {
+        await pool.query(
+          `UPDATE ventas SET plan_id=$1, forma_pago_id=$2, monto=$3, codigo_ficha=$4, tipo=$5, estado=$6 WHERE id=$7`,
+          [
+            plan_id,
+            forma_pago_id,
+            monto,
+            codigo_ficha,
+            tipo || "individual",
+            estado,
+            req.params.id,
+          ],
+        );
+      } else {
+        await pool.query(
+          `UPDATE ventas SET plan_id=$1, forma_pago_id=$2, monto=$3, codigo_ficha=$4, tipo=$5 WHERE id=$6`,
+          [
+            plan_id,
+            forma_pago_id,
+            monto,
+            codigo_ficha,
+            tipo || "individual",
+            req.params.id,
+          ],
+        );
+      }
       res.json({ message: "Actualizada" });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
-  }
+  },
 );
 
 router.delete(
@@ -309,7 +326,7 @@ router.delete(
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
-  }
+  },
 );
 
 module.exports = router;
