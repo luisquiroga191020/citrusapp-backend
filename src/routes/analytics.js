@@ -122,13 +122,25 @@ router.get("/dashboard", auth, async (req, res) => {
                 ) as activos_hoy,
 
                 -- 4. Objetivo Global
-                (SELECT COALESCE(SUM(pp.objetivo), 0)
+                (SELECT COALESCE(SUM(
+                    CASE 
+                        WHEN p.dias_operativos > 0 THEN 
+                          (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - (
+                             SELECT COUNT(DISTINCT jp_sub.id) 
+                             FROM jornada_promotores jp_sub 
+                             JOIN jornadas j_sub ON jp_sub.jornada_id = j_sub.id
+                             JOIN tipo_novedad tn_sub ON jp_sub.tipo_novedad_id = tn_sub.id
+                             WHERE jp_sub.promotor_id = pp.promotor_id 
+                               AND j_sub.periodo_id = p.id 
+                               AND tn_sub.operativo = 'NO'
+                          ))
+                        ELSE pp.objetivo::float
+                    END
+                ), 0)
                  FROM periodo_promotores pp
                  JOIN periodos p ON pp.periodo_id = p.id
                  WHERE ${objetivoWhereClause}
                  ${zonaConditionObjetivo}
-                 -- Evitar duplicar objetivos si un promotor está en el mismo periodo multiple veces (poco probable por diseño pero safeproof)
-                 -- Group by logic is not needed if we sum pp.objetivo directly assuming uniqueness in periodo_promotores
                 ) as objetivo_global
         `;
 
