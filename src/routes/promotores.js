@@ -69,7 +69,8 @@ router.get(
           // Calcular totales para todo el periodo (todas las zonas)
           const totalesQuery = `
             SELECT 
-              COALESCE(SUM(v.monto), 0) as venta_real,
+              COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
+              COALESCE(SUM(v.monto), 0) as venta_planillada,
               COUNT(DISTINCT v.id) as total_fichas
             FROM jornada_promotores jp
             JOIN jornadas j ON jp.jornada_id = j.id
@@ -114,6 +115,7 @@ router.get(
           }
 
           const venta_real = totalesResult.rows[0].venta_real;
+          const venta_planillada = totalesResult.rows[0].venta_planillada;
           const total_fichas = totalesResult.rows[0].total_fichas;
           const delta = venta_real - objetivo_real; // Delta sobre objetivo real
 
@@ -129,7 +131,8 @@ router.get(
                WHERE s.id = ANY(jp.stands_ids)) as stand_nombre,
               tn.nombre as tipo_novedad,
               COUNT(v.id) as fichas,
-              COALESCE(SUM(v.monto), 0) as venta_dia
+              COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_dia,
+              COALESCE(SUM(v.monto), 0) as venta_planillada_dia
             FROM jornadas j
             INNER JOIN jornada_promotores jp ON jp.jornada_id = j.id AND jp.promotor_id = $1
             LEFT JOIN zonas z ON z.id = jp.zona_id
@@ -153,6 +156,7 @@ router.get(
                   v.monto,
                   v.codigo_ficha,
                   v.created_at,
+                  v.estado,
                   pl.nombre as plan_nombre,
                   fp.nombre as forma_pago
                 FROM ventas v
@@ -181,6 +185,7 @@ router.get(
             dias_operativos: dias_operativos_periodo,
             dias_no_operativos: dias_no_operativos,
             venta_real: venta_real,
+            venta_planillada: venta_planillada,
             delta: delta,
             total_fichas: total_fichas,
             jornadas: jornadasConVentas,

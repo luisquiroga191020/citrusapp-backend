@@ -130,17 +130,18 @@ router.get(
       // B. KPIS GENERALES + DESGLOSE PAGO
       const totalesQuery = `
             SELECT 
-                COALESCE(SUM(v.monto), 0) as total_ventas,
+                COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as total_ventas,
+                COALESCE(SUM(v.monto), 0) as venta_planillada,
                 COUNT(v.id) as total_fichas,
                 COUNT(DISTINCT v.jornada_promotor_id) as dias_hombre_trabajados,
-                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo'), 0) as venta_efectivo,
-                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Débito'), 0) as venta_debito,
-                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Crédito'), 0) as venta_credito,
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo' AND v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_efectivo,
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Débito' AND v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_debito,
+                COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Crédito' AND v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_credito,
                 COUNT(v.id) FILTER (WHERE fp.tipo = 'Efectivo') as fichas_efectivo,
                 COUNT(v.id) FILTER (WHERE fp.tipo = 'Débito') as fichas_debito,
                 COUNT(v.id) FILTER (WHERE fp.tipo = 'Crédito') as fichas_credito,
-                CASE WHEN COUNT(v.id) > 0 THEN SUM(v.monto) / COUNT(v.id) ELSE 0 END as ticket_promedio,
-                CASE WHEN COUNT(DISTINCT v.jornada_promotor_id) > 0 THEN SUM(v.monto) / COUNT(DISTINCT v.jornada_promotor_id) ELSE 0 END as venta_promedio_diaria_promotor
+                CASE WHEN COUNT(v.id) > 0 THEN SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) / COUNT(v.id) ELSE 0 END as ticket_promedio,
+                CASE WHEN COUNT(DISTINCT v.jornada_promotor_id) > 0 THEN SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) / COUNT(DISTINCT v.jornada_promotor_id) ELSE 0 END as venta_promedio_diaria_promotor
             FROM ventas v
             JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
             JOIN jornadas j ON jp.jornada_id = j.id
@@ -154,11 +155,11 @@ router.get(
             WITH ventas_por_turno AS (
                 SELECT 
                     pp.tipo_jornada,
-                    SUM(v.monto) as venta_diaria_total,
+                    SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) as venta_diaria_total,
                     CASE 
-                        WHEN pp.tipo_jornada = 'Full Time' THEN SUM(v.monto) / 9.0
-                        WHEN pp.tipo_jornada = 'Part Time' THEN SUM(v.monto) / 6.0
-                        ELSE SUM(v.monto) / 8.0 
+                        WHEN pp.tipo_jornada = 'Full Time' THEN SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) / 9.0
+                        WHEN pp.tipo_jornada = 'Part Time' THEN SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) / 6.0
+                        ELSE SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) / 8.0 
                     END as venta_hora
                 FROM ventas v
                 JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
@@ -228,7 +229,8 @@ router.get(
       const jornadasQuery = `
             SELECT j.id, j.fecha, u.nombre_completo as creador,
             (SELECT COUNT(*) FROM jornada_promotores WHERE jornada_id = j.id) as asistencias,
-            (SELECT COALESCE(SUM(monto),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_dia,
+            (SELECT COALESCE(SUM(monto) FILTER (WHERE estado IN ('CARGADO', 'PENDIENTE')),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_dia,
+            (SELECT COALESCE(SUM(monto),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_planillada_dia,
             (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as fichas_dia
             FROM jornadas j JOIN usuarios u ON j.created_by = u.id WHERE j.periodo_id = $1 ORDER BY j.fecha DESC
         `;
@@ -253,12 +255,13 @@ router.get(
               END as objetivo,
 
               -- DATA REAL
-              COALESCE(SUM(v.monto), 0) as venta_real, 
+              COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
+              COALESCE(SUM(v.monto), 0) as venta_planillada,
               COUNT(v.id) as cantidad_fichas,
               COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO') as dias_no_operativos,
               
               -- DELTA SOBRE OBJETIVO REAL
-              (COALESCE(SUM(v.monto), 0) - (
+              (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) - (
                  CASE 
                     WHEN p.dias_operativos > 0 THEN 
                       (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
@@ -277,7 +280,7 @@ router.get(
                       pp.objetivo::float 
                   END
                 ) > 0 THEN 
-                  (COALESCE(SUM(v.monto), 0) / (
+                  (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) / (
                      CASE 
                         WHEN p.dias_operativos > 0 THEN 
                           (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))

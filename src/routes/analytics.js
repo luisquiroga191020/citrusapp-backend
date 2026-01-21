@@ -85,7 +85,7 @@ router.get("/dashboard", auth, async (req, res) => {
     const query = `
             SELECT
                 -- 1. Ventas
-                (SELECT COALESCE(SUM(v.monto), 0)
+                (SELECT COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0)
                  FROM ventas v
                  JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
                  JOIN jornadas j ON jp.jornada_id = j.id
@@ -93,6 +93,15 @@ router.get("/dashboard", auth, async (req, res) => {
                  WHERE ${ventasFichasWhereClause}
                  ${zonaConditionVentasFichas}
                 ) as ventas_mes,
+
+                (SELECT COALESCE(SUM(v.monto), 0)
+                 FROM ventas v
+                 JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+                 JOIN jornadas j ON jp.jornada_id = j.id
+                 ${ventasFichasJoinPeriodos}
+                 WHERE ${ventasFichasWhereClause}
+                 ${zonaConditionVentasFichas}
+                ) as ventas_planillada_mes,
 
                 -- 2. Fichas
                 (SELECT COUNT(*)
@@ -151,11 +160,12 @@ router.get("/ranking", auth, async (req, res) => {
                 pr.nombre_completo,
                 pr.foto_url,
                 COALESCE(MAX(pp.objetivo), 0) as objetivo,
-                COALESCE(SUM(v.monto), 0) as venta_real,
+                COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
+                COALESCE(SUM(v.monto), 0) as venta_planillada,
                 COUNT(v.id) as fichas,
-                (COALESCE(SUM(v.monto), 0) - COALESCE(MAX(pp.objetivo), 0)) as delta,
+                (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) - COALESCE(MAX(pp.objetivo), 0)) as delta,
                 CASE
-                    WHEN COALESCE(MAX(pp.objetivo), 0) > 0 THEN (COALESCE(SUM(v.monto), 0) / MAX(pp.objetivo)::float) * 100
+                    WHEN COALESCE(MAX(pp.objetivo), 0) > 0 THEN (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) / MAX(pp.objetivo)::float) * 100
                     ELSE 0
                 END as avance_porcentaje,
                 MAX(pp.tipo_jornada) as tipo_jornada,
@@ -196,12 +206,13 @@ router.get("/ranking", auth, async (req, res) => {
                       pp.objetivo::float 
                 END as objetivo,
 
-                COALESCE(SUM(v.monto), 0) as venta_real,
+                COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
+                COALESCE(SUM(v.monto), 0) as venta_planillada,
                 COUNT(v.id) as fichas,
                 COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO') as dias_no_operativos,
                 
                 -- DELTA SOBRE OBJETIVO REAL
-                (COALESCE(SUM(v.monto), 0) - (
+                (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) - (
                     CASE 
                         WHEN p.dias_operativos > 0 THEN 
                           (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
@@ -220,7 +231,7 @@ router.get("/ranking", auth, async (req, res) => {
                               pp.objetivo::float 
                         END
                     ) > 0 THEN 
-                        (COALESCE(SUM(v.monto), 0) / (
+                        (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) / (
                             CASE 
                                 WHEN p.dias_operativos > 0 THEN 
                                   (pp.objetivo::float / p.dias_operativos) * (p.dias_operativos - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
