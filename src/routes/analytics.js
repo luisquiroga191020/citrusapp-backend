@@ -345,4 +345,58 @@ router.get("/planes", auth, async (req, res) => {
   }
 });
 
+// 5. DISTRIBUCIÓN DE EFICIENCIA (Cross-Zone)
+router.get("/eficiencia", auth, async (req, res) => {
+  try {
+    const { rol, zona_id } = req.user;
+    const { startDate, endDate } = req.query;
+
+    const filter = buildDateFilter(startDate, endDate);
+    let whereClause = filter.sql;
+    let params = [...filter.params];
+
+    if (rol === "Lider") {
+      whereClause += ` AND j.zona_id = $${params.length + 1}`;
+      params.push(zona_id);
+    }
+
+    const query = `
+      WITH ventas_por_turno AS (
+          SELECT 
+              pp.tipo_jornada,
+              SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) as venta_diaria_total,
+              CASE 
+                  WHEN pp.tipo_jornada = 'Full Time' THEN SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) / 9.0
+                  WHEN pp.tipo_jornada = 'Part Time' THEN SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) / 6.0
+                  ELSE SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) / 8.0 
+              END as venta_hora
+          FROM ventas v
+          JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+          JOIN jornadas j ON jp.jornada_id = j.id
+          JOIN periodos p ON j.periodo_id = p.id
+          JOIN periodo_promotores pp ON (pp.periodo_id = p.id AND pp.promotor_id = jp.promotor_id)
+          WHERE ${whereClause}
+          GROUP BY pp.tipo_jornada, jp.id
+      )
+      SELECT 
+          tipo_jornada,
+          COUNT(*) as n_muestras,
+          COALESCE(AVG(venta_hora), 0) as promedio_hora,
+          COALESCE(MIN(venta_hora), 0) as min,
+          COALESCE(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY venta_hora), 0) as q1,
+          COALESCE(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY venta_hora), 0) as mediana,
+          COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY venta_hora), 0) as q3,
+          COALESCE(MAX(venta_hora), 0) as max
+      FROM ventas_por_turno
+      GROUP BY tipo_jornada
+    `;
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error en /eficiencia:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
