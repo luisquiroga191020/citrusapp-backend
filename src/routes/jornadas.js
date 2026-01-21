@@ -347,4 +347,22 @@ router.put(
   },
 );
 
+router.put(
+  "/promotores/:jp_id/stands",
+  auth,
+  verifyRole(["Administrador"]),
+  async (req, res) => {
+    const { stands_ids } = req.body;
+    try {
+      await pool.query(
+        "UPDATE jornada_promotores SET stands_ids = $1 WHERE id = $2",
+        [stands_ids || [], req.params.jp_id],
+      );
+      res.json({ message: "Stands actualizados" });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
+
 module.exports = router;

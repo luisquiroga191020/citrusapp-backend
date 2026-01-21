@@ -125,6 +125,8 @@ router.get(
               j.id as jornada_id,
               j.fecha,
               jp.id as jornada_promotor_id,
+              jp.stands_ids,
+              jp.zona_id,
               z.nombre as zona_nombre,
               (SELECT string_agg(s.nombre, ', ') 
                FROM stands s 
@@ -139,7 +141,7 @@ router.get(
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
             LEFT JOIN tipo_novedad tn ON tn.id = jp.tipo_novedad_id
             WHERE j.periodo_id = $2
-            GROUP BY j.id, j.fecha, jp.id, z.nombre, jp.stands_ids, tn.nombre
+            GROUP BY j.id, j.fecha, jp.id, z.nombre, jp.stands_ids, tn.nombre, jp.zona_id
             ORDER BY j.fecha DESC
           `;
           const jornadasResult = await pool.query(jornadasQuery, [
