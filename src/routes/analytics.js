@@ -417,6 +417,7 @@ router.get("/eficiencia", auth, async (req, res) => {
       WITH ventas_por_turno AS (
           SELECT 
               pp.tipo_jornada,
+              jp.promotor_id,
               SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) as venta_diaria_total,
               CASE 
                   WHEN pp.tipo_jornada = 'Full Time' THEN SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')) / 9.0
@@ -429,10 +430,11 @@ router.get("/eficiencia", auth, async (req, res) => {
           JOIN periodos p ON j.periodo_id = p.id
           JOIN periodo_promotores pp ON (pp.periodo_id = p.id AND pp.promotor_id = jp.promotor_id)
           WHERE ${whereClause}
-          GROUP BY pp.tipo_jornada, jp.id
+          GROUP BY pp.tipo_jornada, jp.promotor_id, jp.id
       )
       SELECT 
           tipo_jornada,
+          COUNT(DISTINCT promotor_id) as n_promotores,
           COUNT(*) as n_muestras,
           COALESCE(AVG(venta_hora), 0) as promedio_hora,
           COALESCE(MIN(venta_hora), 0) as min,
