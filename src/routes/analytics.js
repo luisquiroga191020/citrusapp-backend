@@ -345,6 +345,59 @@ router.get("/planes", auth, async (req, res) => {
   }
 });
 
+// --- HELPERS ESTADÍSTICOS (Reutilizados de periodos.js) ---
+function getPFromZ(z) {
+  if (z < 0) z = -z;
+  const p = 1 / (1 + 0.2316419 * z);
+  const d = 0.3989422804014337 * Math.exp((-z * z) / 2);
+  const prob =
+    d *
+    p *
+    (0.31938153 +
+      p *
+        (-0.356563782 +
+          p * (1.781477937 + p * (-1.821255978 + 1.330274429 * p))));
+  return 2 * prob; // Dos colas
+}
+
+function calculateMannWhitney(groupA, groupB) {
+  const n1 = groupA.length;
+  const n2 = groupB.length;
+  if (n1 === 0 || n2 === 0)
+    return { u: 0, z: null, p_value: null, conclusion: "Datos insuficientes" };
+
+  const combined = [
+    ...groupA.map((v) => ({ val: Number(v), group: "A" })),
+    ...groupB.map((v) => ({ val: Number(v), group: "B" })),
+  ].sort((a, b) => a.val - b.val);
+
+  let rankSumA = 0;
+  combined.forEach((item, index) => {
+    if (item.group === "A") rankSumA += index + 1;
+  });
+
+  const u1 = n1 * n2 + (n1 * (n1 + 1)) / 2 - rankSumA;
+  const u2 = n1 * n2 - u1;
+  const u = Math.min(u1, u2);
+
+  let conclusion = "Rendimiento similar (por hora)";
+  let p_value = null;
+  let z = null;
+
+  if (n1 > 5 && n2 > 5) {
+    const mu = (n1 * n2) / 2;
+    const sigma = Math.sqrt((n1 * n2 * (n1 + n2 + 1)) / 12);
+    if (sigma !== 0) {
+      z = (u - mu) / sigma;
+      p_value = getPFromZ(z);
+      if (p_value < 0.05) {
+        conclusion = "Diferencia SIGNIFICATIVA de Eficiencia";
+      }
+    }
+  }
+  return { u, z, p_value, conclusion };
+}
+
 // 5. DISTRIBUCIÓN DE EFICIENCIA (Cross-Zone)
 router.get("/eficiencia", auth, async (req, res) => {
   try {
@@ -386,13 +439,50 @@ router.get("/eficiencia", auth, async (req, res) => {
           COALESCE(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY venta_hora), 0) as q1,
           COALESCE(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY venta_hora), 0) as mediana,
           COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY venta_hora), 0) as q3,
-          COALESCE(MAX(venta_hora), 0) as max
+          COALESCE(MAX(venta_hora), 0) as max,
+          json_agg(venta_hora) as raw_data
       FROM ventas_por_turno
       GROUP BY tipo_jornada
     `;
 
     const result = await pool.query(query, params);
-    res.json(result.rows);
+
+    // Preparar respuesta estructurada
+    const fullStats = result.rows.find(
+      (r) => r.tipo_jornada === "Full Time",
+    ) || {
+      min: 0,
+      q1: 0,
+      mediana: 0,
+      q3: 0,
+      max: 0,
+      raw_data: [],
+      n_muestras: 0,
+      promedio_hora: 0,
+    };
+    const partStats = result.rows.find(
+      (r) => r.tipo_jornada === "Part Time",
+    ) || {
+      min: 0,
+      q1: 0,
+      mediana: 0,
+      q3: 0,
+      max: 0,
+      raw_data: [],
+      n_muestras: 0,
+      promedio_hora: 0,
+    };
+
+    const mannWhitney = calculateMannWhitney(
+      fullStats.raw_data || [],
+      partStats.raw_data || [],
+    );
+
+    res.json({
+      full: fullStats,
+      part: partStats,
+      mann_whitney: mannWhitney,
+    });
   } catch (err) {
     console.error("Error en /eficiencia:", err);
     res.status(500).json({ error: err.message });
