@@ -365,4 +365,22 @@ router.put(
   },
 );
 
+router.put(
+  "/ventas/:id/estado",
+  auth,
+  verifyRole(["Administrador"]),
+  async (req, res) => {
+    const { estado } = req.body;
+    try {
+      await pool.query("UPDATE ventas SET estado = $1 WHERE id = $2", [
+        estado,
+        req.params.id,
+      ]);
+      res.json({ message: "Estado actualizado" });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
+
 module.exports = router;
