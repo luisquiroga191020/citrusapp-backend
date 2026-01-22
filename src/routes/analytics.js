@@ -503,4 +503,145 @@ router.get("/eficiencia", auth, async (req, res) => {
   }
 });
 
+// 6. MAPA DE STANDS - Visualización geográfica de ventas
+router.get("/mapa-stands", auth, async (req, res) => {
+  try {
+    const { rol, zona_id } = req.user;
+    const { periodo_id, stand_id, plan_id, forma_pago_id, promotor_id } =
+      req.query;
+
+    const params = [];
+    let whereConditions = [];
+    let joinPeriodos = "";
+
+    // 1. Filtro de Periodo
+    if (periodo_id) {
+      whereConditions.push(`j.periodo_id = $${params.length + 1}`);
+      params.push(periodo_id);
+    } else {
+      // Default: Periodos Activos
+      whereConditions.push(`p.estado = 'Activo'`);
+      joinPeriodos = `JOIN periodos p ON j.periodo_id = p.id`;
+    }
+
+    // 2. Filtro de Zona (Permisos)
+    if (rol === "Lider") {
+      whereConditions.push(`s.zona_id = $${params.length + 1}`);
+      params.push(zona_id);
+    }
+
+    // 3. Filtro de Stand (Opcional)
+    if (stand_id) {
+      whereConditions.push(`s.id = $${params.length + 1}`);
+      params.push(stand_id);
+    }
+
+    // 4. Filtro de Plan (Opcional)
+    if (plan_id) {
+      whereConditions.push(`v.plan_id = $${params.length + 1}`);
+      params.push(plan_id);
+    }
+
+    // 5. Filtro de Forma de Pago (Opcional)
+    if (forma_pago_id) {
+      whereConditions.push(`v.forma_pago_id = $${params.length + 1}`);
+      params.push(forma_pago_id);
+    }
+
+    // 6. Filtro de Promotor (Opcional)
+    if (promotor_id) {
+      whereConditions.push(`jp.promotor_id = $${params.length + 1}`);
+      params.push(promotor_id);
+    }
+
+    // Solo stands con ubicación válida
+    whereConditions.push(`s.ubicacion_lat IS NOT NULL`);
+    whereConditions.push(`s.ubicacion_lng IS NOT NULL`);
+
+    const whereClause =
+      whereConditions.length > 0
+        ? `WHERE ${whereConditions.join(" AND ")}`
+        : "";
+
+    const query = `
+      SELECT 
+        s.id,
+        s.nombre,
+        s.ubicacion_lat,
+        s.ubicacion_lng,
+        z.nombre as zona_nombre,
+        z.color as zona_color,
+        COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as total_ventas,
+        COALESCE(SUM(v.monto), 0) as total_ventas_planilladas,
+        COUNT(v.id) as total_fichas,
+        COUNT(DISTINCT jp.promotor_id) as total_promotores
+      FROM stands s
+      JOIN zonas z ON s.zona_id = z.id
+      LEFT JOIN jornada_promotores jp ON s.id = ANY(jp.stands_ids)
+      LEFT JOIN jornadas j ON jp.jornada_id = j.id
+      ${joinPeriodos}
+      LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+      ${whereClause}
+      GROUP BY s.id, s.nombre, s.ubicacion_lat, s.ubicacion_lng, z.nombre, z.color
+      HAVING s.ubicacion_lat IS NOT NULL AND s.ubicacion_lng IS NOT NULL
+      ORDER BY total_ventas DESC
+    `;
+
+    const result = await pool.query(query, params);
+
+    // Obtener lista de periodos para el selector (filtrado por zona si es Líder)
+    let periodosQuery = `SELECT id, nombre, estado FROM periodos`;
+    let periodosParams = [];
+    if (rol === "Lider") {
+      periodosQuery += ` WHERE zona_id = $1`;
+      periodosParams.push(zona_id);
+    }
+    periodosQuery += ` ORDER BY fecha_inicio DESC`;
+    const periodosResult = await pool.query(periodosQuery, periodosParams);
+
+    // Obtener listas para filtros
+    let standsQuery = `SELECT id, nombre FROM stands WHERE ubicacion_lat IS NOT NULL AND ubicacion_lng IS NOT NULL`;
+    let standsParams = [];
+    if (rol === "Lider") {
+      standsQuery += ` AND zona_id = $1`;
+      standsParams.push(zona_id);
+    }
+    standsQuery += ` ORDER BY nombre`;
+    const standsResult = await pool.query(standsQuery, standsParams);
+
+    const planesResult = await pool.query(
+      `SELECT id, nombre FROM planes ORDER BY nombre`,
+    );
+    const formasPagoResult = await pool.query(
+      `SELECT id, nombre FROM formas_pago ORDER BY nombre`,
+    );
+
+    let promotoresQuery = `SELECT DISTINCT pr.id, pr.nombre_completo FROM promotores pr`;
+    let promotoresParams = [];
+    if (rol === "Lider") {
+      promotoresQuery += ` WHERE pr.zona_id = $1`;
+      promotoresParams.push(zona_id);
+    }
+    promotoresQuery += ` ORDER BY pr.nombre_completo`;
+    const promotoresResult = await pool.query(
+      promotoresQuery,
+      promotoresParams,
+    );
+
+    res.json({
+      stands: result.rows,
+      filtros: {
+        periodos: periodosResult.rows,
+        stands: standsResult.rows,
+        planes: planesResult.rows,
+        formas_pago: formasPagoResult.rows,
+        promotores: promotoresResult.rows,
+      },
+    });
+  } catch (err) {
+    console.error("Error en /mapa-stands:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
