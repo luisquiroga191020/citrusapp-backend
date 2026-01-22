@@ -103,7 +103,14 @@ router.get("/dashboard", auth, async (req, res) => {
                  ${zonaConditionVentasFichas}
                 ) as ventas_planillada_mes,
 
-                ) as fichas_mes,
+                (SELECT COUNT(*)
+                 FROM ventas v
+                 JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+                 JOIN jornadas j ON jp.jornada_id = j.id
+                 ${ventasFichasJoinPeriodos}
+                 WHERE ${ventasFichasWhereClause}
+                 ${zonaConditionVentasFichas}
+                ) as total_fichas,
 
                 (SELECT COUNT(*)
                  FROM ventas v
@@ -113,7 +120,7 @@ router.get("/dashboard", auth, async (req, res) => {
                  WHERE ${ventasFichasWhereClause}
                  AND v.estado = 'RECHAZADO'
                  ${zonaConditionVentasFichas}
-                ) as fichas_rechazadas_mes,
+                ) as total_fichas_rechazadas,
 
                 -- 3. Promotores Activos HOY
                 (SELECT COUNT(DISTINCT jp.promotor_id)
@@ -176,8 +183,8 @@ router.get("/ranking", auth, async (req, res) => {
                 COALESCE(MAX(pp.objetivo), 0) as objetivo,
                 COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
                 COALESCE(SUM(v.monto), 0) as venta_planillada,
-                                COUNT(v.id) as fichas,
-                COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as fichas_rechazadas,
+                COUNT(v.id) as total_fichas,
+                COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as total_fichas_rechazadas,
                 (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) - COALESCE(MAX(pp.objetivo), 0)) as delta,
                 CASE
                     WHEN COALESCE(MAX(pp.objetivo), 0) > 0 THEN (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) / MAX(pp.objetivo)::float) * 100
@@ -223,8 +230,8 @@ router.get("/ranking", auth, async (req, res) => {
 
                 COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
                 COALESCE(SUM(v.monto), 0) as venta_planillada,
-                COUNT(v.id) as fichas,
-                COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as fichas_rechazadas,
+                COUNT(v.id) as total_fichas,
+                COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as total_fichas_rechazadas,
                 COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO') as dias_no_operativos,
                 
                 -- DELTA SOBRE OBJETIVO REAL

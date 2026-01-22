@@ -119,6 +119,8 @@ router.get(
           const venta_real = totalesResult.rows[0].venta_real;
           const venta_planillada = totalesResult.rows[0].venta_planillada;
           const total_fichas = totalesResult.rows[0].total_fichas;
+          const total_fichas_rechazadas =
+            totalesResult.rows[0].total_fichas_rechazadas;
           const delta = venta_real - objetivo_real; // Delta sobre objetivo real
 
           // Obtener jornadas para este periodo
@@ -134,8 +136,8 @@ router.get(
                FROM stands s 
                WHERE s.id = ANY(jp.stands_ids)) as stand_nombre,
               tn.nombre as tipo_novedad,
-              COUNT(v.id) as fichas,
-              COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as fichas_rechazadas_dia,
+              COUNT(v.id) as total_fichas,
+              COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as total_fichas_rechazadas,
               COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_dia,
               COALESCE(SUM(v.monto), 0) as venta_planillada_dia
             FROM jornadas j
@@ -194,6 +196,7 @@ router.get(
             venta_planillada: venta_planillada,
             delta: delta,
             total_fichas: total_fichas,
+            total_fichas_rechazadas: total_fichas_rechazadas,
             jornadas: jornadasConVentas,
           };
         }),

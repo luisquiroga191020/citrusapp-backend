@@ -196,8 +196,9 @@ router.get(
         `SELECT 
         j.id as jornada_id,
         j.fecha,
-        COALESCE(SUM(v.monto), 0) as total_ventas,
-        COUNT(v.id) as total_fichas
+        COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as total_ventas,
+        COUNT(v.id) as total_fichas,
+        COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as total_fichas_rechazadas
       FROM jornadas j
       JOIN jornada_promotores jp ON jp.jornada_id = j.id
       LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
@@ -216,8 +217,9 @@ router.get(
             jp.promotor_id,
             pr.nombre_completo,
             pr.foto_url,
-            COALESCE(SUM(v.monto), 0) as venta_total,
-            COUNT(v.id) as fichas
+            COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_total,
+            COUNT(v.id) as total_fichas,
+            COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as total_fichas_rechazadas
           FROM jornada_promotores jp
           JOIN promotores pr ON pr.id = jp.promotor_id
           LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
@@ -268,8 +270,9 @@ router.get(
       // Calcular totales generales del periodo objetivo
       const totalesRes = await pool.query(
         `SELECT 
-        COALESCE(SUM(v.monto), 0) as total_ventas,
+        COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as total_ventas,
         COUNT(v.id) as total_fichas,
+        COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as total_fichas_rechazadas,
         COUNT(DISTINCT j.id) as total_jornadas
       FROM jornadas j
       JOIN jornada_promotores jp ON jp.jornada_id = j.id
