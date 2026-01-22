@@ -133,6 +133,7 @@ router.get(
                 COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as total_ventas,
                 COALESCE(SUM(v.monto), 0) as venta_planillada,
                 COUNT(v.id) as total_fichas,
+                COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as total_fichas_rechazadas,
                 COUNT(DISTINCT v.jornada_promotor_id) as dias_hombre_trabajados,
                 COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Efectivo' AND v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_efectivo,
                 COALESCE(SUM(v.monto) FILTER (WHERE fp.tipo = 'Débito' AND v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_debito,
@@ -231,7 +232,8 @@ router.get(
             (SELECT COUNT(*) FROM jornada_promotores WHERE jornada_id = j.id) as asistencias,
             (SELECT COALESCE(SUM(monto) FILTER (WHERE estado IN ('CARGADO', 'PENDIENTE')),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_dia,
             (SELECT COALESCE(SUM(monto),0) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as venta_planillada_dia,
-            (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as fichas_dia
+            (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id) as fichas_dia,
+            (SELECT COUNT(*) FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id WHERE jp.jornada_id = j.id AND v.estado = 'RECHAZADO') as fichas_rechazadas_dia
             FROM jornadas j JOIN usuarios u ON j.created_by = u.id WHERE j.periodo_id = $1 ORDER BY j.fecha DESC
         `;
       const jornadas = (await pool.query(jornadasQuery, [id])).rows;
@@ -258,6 +260,7 @@ router.get(
               COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
               COALESCE(SUM(v.monto), 0) as venta_planillada,
               COUNT(v.id) as cantidad_fichas,
+              COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as fichas_rechazadas,
               COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO') as dias_no_operativos,
               
               -- DELTA SOBRE OBJETIVO REAL

@@ -103,15 +103,17 @@ router.get("/dashboard", auth, async (req, res) => {
                  ${zonaConditionVentasFichas}
                 ) as ventas_planillada_mes,
 
-                -- 2. Fichas
+                ) as fichas_mes,
+
                 (SELECT COUNT(*)
                  FROM ventas v
                  JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
                  JOIN jornadas j ON jp.jornada_id = j.id
                  ${ventasFichasJoinPeriodos}
                  WHERE ${ventasFichasWhereClause}
+                 AND v.estado = 'RECHAZADO'
                  ${zonaConditionVentasFichas}
-                ) as fichas_mes,
+                ) as fichas_rechazadas_mes,
 
                 -- 3. Promotores Activos HOY
                 (SELECT COUNT(DISTINCT jp.promotor_id)
