@@ -76,7 +76,8 @@ router.get(
              FROM ventas v WHERE v.jornada_promotor_id = jp.id) as venta_hoy,
             (SELECT COALESCE(SUM(monto), 0) 
              FROM ventas v WHERE v.jornada_promotor_id = jp.id) as venta_planillada_hoy,
-            (SELECT COUNT(*)::int FROM ventas v WHERE v.jornada_promotor_id = jp.id) as fichas_hoy
+                        (SELECT COUNT(*)::int FROM ventas v WHERE v.jornada_promotor_id = jp.id) as fichas_hoy,
+            (SELECT COUNT(*)::int FROM ventas v WHERE v.jornada_promotor_id = jp.id AND v.estado = 'RECHAZADO') as fichas_rechazadas_hoy
        FROM jornada_promotores jp
        JOIN promotores pr ON jp.promotor_id = pr.id
        JOIN jornadas j ON jp.jornada_id = j.id

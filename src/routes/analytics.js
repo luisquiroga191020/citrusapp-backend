@@ -174,7 +174,8 @@ router.get("/ranking", auth, async (req, res) => {
                 COALESCE(MAX(pp.objetivo), 0) as objetivo,
                 COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
                 COALESCE(SUM(v.monto), 0) as venta_planillada,
-                COUNT(v.id) as fichas,
+                                COUNT(v.id) as fichas,
+                COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as fichas_rechazadas,
                 (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) - COALESCE(MAX(pp.objetivo), 0)) as delta,
                 CASE
                     WHEN COALESCE(MAX(pp.objetivo), 0) > 0 THEN (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) / MAX(pp.objetivo)::float) * 100
@@ -221,6 +222,7 @@ router.get("/ranking", auth, async (req, res) => {
                 COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
                 COALESCE(SUM(v.monto), 0) as venta_planillada,
                 COUNT(v.id) as fichas,
+                COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as fichas_rechazadas,
                 COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO') as dias_no_operativos,
                 
                 -- DELTA SOBRE OBJETIVO REAL
