@@ -72,7 +72,8 @@ router.get(
             SELECT 
               COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_real,
               COALESCE(SUM(v.monto), 0) as venta_planillada,
-              COUNT(DISTINCT v.id) as total_fichas
+              COUNT(DISTINCT v.id) as total_fichas,
+              COUNT(DISTINCT v.id) FILTER (WHERE v.estado = 'RECHAZADO') as total_fichas_rechazadas
             FROM jornada_promotores jp
             JOIN jornadas j ON jp.jornada_id = j.id
             LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
@@ -134,6 +135,7 @@ router.get(
                WHERE s.id = ANY(jp.stands_ids)) as stand_nombre,
               tn.nombre as tipo_novedad,
               COUNT(v.id) as fichas,
+              COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as fichas_rechazadas_dia,
               COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as venta_dia,
               COALESCE(SUM(v.monto), 0) as venta_planillada_dia
             FROM jornadas j
