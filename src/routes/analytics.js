@@ -570,7 +570,6 @@ router.get("/mapa-stands", auth, async (req, res) => {
         s.ubicacion_lat,
         s.ubicacion_lng,
         z.nombre as zona_nombre,
-        z.color as zona_color,
         COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as total_ventas,
         COALESCE(SUM(v.monto), 0) as total_ventas_planilladas,
         COUNT(v.id) as total_fichas,
@@ -582,7 +581,7 @@ router.get("/mapa-stands", auth, async (req, res) => {
       ${joinPeriodos}
       LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
       ${whereClause}
-      GROUP BY s.id, s.nombre, s.ubicacion_lat, s.ubicacion_lng, z.nombre, z.color
+      GROUP BY s.id, s.nombre, s.ubicacion_lat, s.ubicacion_lng, z.nombre
       HAVING s.ubicacion_lat IS NOT NULL AND s.ubicacion_lng IS NOT NULL
       ORDER BY total_ventas DESC
     `;
