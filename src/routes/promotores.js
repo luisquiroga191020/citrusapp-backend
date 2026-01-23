@@ -104,13 +104,29 @@ router.get(
           );
           const dias_operativos_periodo = periodo.dias_operativos || 0;
 
+          // Calcular total de jornadas registradas del promotor en este periodo
+          const totalJornadasQuery = `
+            SELECT COUNT(DISTINCT j.id) as total
+            FROM jornada_promotores jp
+            JOIN jornadas j ON jp.jornada_id = j.id
+            WHERE jp.promotor_id = $1 
+              AND j.periodo_id = $2
+          `;
+          const totalJornadasResult = await pool.query(totalJornadasQuery, [
+            req.params.id,
+            periodo.periodo_id,
+          ]);
+          const total_jornadas_registradas = parseInt(
+            totalJornadasResult.rows[0].total || 0,
+          );
+
           let objetivo = periodo.objetivo || 0;
           let objetivo_real = objetivo;
 
           if (dias_operativos_periodo > 0) {
             const dias_efectivos = Math.max(
               0,
-              dias_operativos_periodo - dias_no_operativos,
+              total_jornadas_registradas - dias_no_operativos,
             );
             objetivo_real =
               (objetivo / dias_operativos_periodo) * dias_efectivos;
