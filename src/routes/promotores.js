@@ -54,10 +54,12 @@ router.get(
               pp.objetivo,
               p.fecha_inicio,
               p.fecha_fin,
-              p.dias_operativos
+              p.dias_operativos,
+              z.nombre as zona_nombre
             FROM jornada_promotores jp
             JOIN jornadas j ON jp.jornada_id = j.id
             JOIN periodos p ON j.periodo_id = p.id
+            LEFT JOIN zonas z ON p.zona_id = z.id
             LEFT JOIN periodo_promotores pp ON (pp.periodo_id = p.id AND pp.promotor_id = jp.promotor_id)
             WHERE jp.promotor_id = $1
             ORDER BY p.fecha_inicio DESC
@@ -220,9 +222,11 @@ router.get(
             periodo_id: periodo.periodo_id,
             periodo: periodo.periodo,
             estado: periodo.estado,
+            zona_nombre: periodo.zona_nombre,
             objetivo: objetivo,
-            objetivo_real: objetivo_real, // Nuevo campo
+            objetivo_real: objetivo_real,
             dias_operativos: dias_operativos_periodo,
+            total_jornadas_registradas: total_jornadas_registradas,
             dias_no_operativos: dias_no_operativos,
             fecha_fin: periodo.fecha_fin,
             venta_real: venta_real,
