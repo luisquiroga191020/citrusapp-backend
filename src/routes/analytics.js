@@ -203,7 +203,9 @@ router.get("/ranking", auth, async (req, res) => {
                     ELSE 0
                 END as avance_porcentaje,
                 MAX(pp.tipo_jornada) as tipo_jornada,
-                MAX(z.nombre) as nombre_zona
+                MAX(z.nombre) as nombre_zona,
+                COUNT(DISTINCT jp.id) as total_jornadas_registradas,
+                COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO') as dias_no_operativos
             FROM ventas v
             JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
             JOIN jornadas j ON jp.jornada_id = j.id
@@ -211,6 +213,7 @@ router.get("/ranking", auth, async (req, res) => {
             JOIN periodo_promotores pp ON (pp.periodo_id = p.id AND pp.promotor_id = jp.promotor_id)
             JOIN promotores pr ON jp.promotor_id = pr.id
             JOIN zonas z ON p.zona_id = z.id
+            LEFT JOIN tipo_novedad tn ON jp.tipo_novedad_id = tn.id
             WHERE j.fecha BETWEEN $1 AND $2
             ${rol === "Lider" ? `AND p.zona_id = $3` : ""}
             GROUP BY pr.id, pr.nombre_completo, pr.foto_url
@@ -247,6 +250,7 @@ router.get("/ranking", auth, async (req, res) => {
                 COALESCE(SUM(v.monto), 0) as venta_planillada,
                 COUNT(v.id) as total_fichas,
                 COUNT(v.id) FILTER (WHERE v.estado = 'RECHAZADO') as total_fichas_rechazadas,
+                COUNT(DISTINCT jp.id) as total_jornadas_registradas,
                 COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO') as dias_no_operativos,
                 
                 -- DELTA SOBRE OBJETIVO REAL
