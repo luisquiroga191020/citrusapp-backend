@@ -135,20 +135,25 @@ router.get("/dashboard", auth, async (req, res) => {
                     CASE 
                         WHEN p.dias_operativos > 0 THEN 
                           (pp.objetivo::float / p.dias_operativos) * (
-                             (SELECT COUNT(DISTINCT j_total.id) 
-                              FROM jornada_promotores jp_total 
-                              JOIN jornadas j_total ON jp_total.jornada_id = j_total.id
-                              WHERE jp_total.promotor_id = pp.promotor_id 
-                                AND j_total.periodo_id = p.id
-                             ) - 
-                             (SELECT COUNT(DISTINCT jp_sub.id) 
-                              FROM jornada_promotores jp_sub 
-                              JOIN jornadas j_sub ON jp_sub.jornada_id = j_sub.id
-                              JOIN tipo_novedad tn_sub ON jp_sub.tipo_novedad_id = tn_sub.id
-                              WHERE jp_sub.promotor_id = pp.promotor_id 
-                                AND j_sub.periodo_id = p.id 
-                                AND tn_sub.operativo = 'NO'
-                             )
+                             (p.dias_operativos - (
+                                SELECT COUNT(DISTINCT j_zona.id)
+                                FROM jornadas j_zona
+                                WHERE j_zona.periodo_id = p.id
+                             )) +
+                             ((SELECT COUNT(DISTINCT j_total.id) 
+                               FROM jornada_promotores jp_total 
+                               JOIN jornadas j_total ON jp_total.jornada_id = j_total.id
+                               WHERE jp_total.promotor_id = pp.promotor_id 
+                                 AND j_total.periodo_id = p.id
+                              ) - 
+                              (SELECT COUNT(DISTINCT jp_sub.id) 
+                               FROM jornada_promotores jp_sub 
+                               JOIN jornadas j_sub ON jp_sub.jornada_id = j_sub.id
+                               JOIN tipo_novedad tn_sub ON jp_sub.tipo_novedad_id = tn_sub.id
+                               WHERE jp_sub.promotor_id = pp.promotor_id 
+                                 AND j_sub.periodo_id = p.id 
+                                 AND tn_sub.operativo = 'NO'
+                              ))
                           )
                         ELSE pp.objetivo::float
                     END
@@ -230,7 +235,10 @@ router.get("/ranking", auth, async (req, res) => {
                 -- CÁLCULO OBJETIVO REAL
                 CASE 
                     WHEN p.dias_operativos > 0 THEN 
-                      (pp.objetivo::float / p.dias_operativos) * (COUNT(DISTINCT j.id) - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                      (pp.objetivo::float / p.dias_operativos) * (
+                        (p.dias_operativos - COUNT(DISTINCT j.id)) + 
+                        (COUNT(DISTINCT j.id) - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                      )
                     ELSE 
                       pp.objetivo::float 
                 END as objetivo,
@@ -245,7 +253,10 @@ router.get("/ranking", auth, async (req, res) => {
                 (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) - (
                     CASE 
                         WHEN p.dias_operativos > 0 THEN 
-                          (pp.objetivo::float / p.dias_operativos) * (COUNT(DISTINCT j.id) - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                          (pp.objetivo::float / p.dias_operativos) * (
+                            (p.dias_operativos - COUNT(DISTINCT j.id)) + 
+                            (COUNT(DISTINCT j.id) - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                          )
                         ELSE 
                           pp.objetivo::float 
                     END
@@ -256,7 +267,10 @@ router.get("/ranking", auth, async (req, res) => {
                     WHEN (
                         CASE 
                             WHEN p.dias_operativos > 0 THEN 
-                              (pp.objetivo::float / p.dias_operativos) * (COUNT(DISTINCT j.id) - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                              (pp.objetivo::float / p.dias_operativos) * (
+                                (p.dias_operativos - COUNT(DISTINCT j.id)) + 
+                                (COUNT(DISTINCT j.id) - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                              )
                             ELSE 
                               pp.objetivo::float 
                         END
@@ -264,7 +278,10 @@ router.get("/ranking", auth, async (req, res) => {
                         (COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) / (
                             CASE 
                                 WHEN p.dias_operativos > 0 THEN 
-                                  (pp.objetivo::float / p.dias_operativos) * (COUNT(DISTINCT j.id) - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                                  (pp.objetivo::float / p.dias_operativos) * (
+                                    (p.dias_operativos - COUNT(DISTINCT j.id)) + 
+                                    (COUNT(DISTINCT j.id) - COUNT(DISTINCT jp.id) FILTER (WHERE tn.operativo = 'NO'))
+                                  )
                                 ELSE 
                                   pp.objetivo::float 
                             END
