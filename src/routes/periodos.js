@@ -321,19 +321,51 @@ router.get(
         )
       ).rows;
 
-      // F. TOPS & SEMANAL & DIARIO
-      const topPlan = (
+      // F. TOPS & RANKINGS
+      const rankingPlanes = (
         await pool.query(
-          `SELECT p.nombre, COUNT(*) as cantidad, SUM(v.monto) as monto FROM ventas v JOIN planes p ON v.plan_id = p.id JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY p.nombre ORDER BY cantidad DESC LIMIT 1`,
+          `SELECT p.nombre, COUNT(v.id) as cantidad, COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as monto 
+           FROM planes p 
+           LEFT JOIN ventas v ON v.plan_id = p.id 
+           LEFT JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id 
+           LEFT JOIN jornadas j ON jp.jornada_id = j.id 
+           WHERE j.periodo_id = $1 OR v.id IS NULL
+           GROUP BY p.id, p.nombre 
+           HAVING COUNT(v.id) > 0
+           ORDER BY cantidad DESC`,
           [id],
         )
-      ).rows[0];
-      const topPago = (
+      ).rows;
+
+      const rankingPagos = (
         await pool.query(
-          `SELECT fp.nombre, COUNT(*) as cantidad FROM ventas v JOIN formas_pago fp ON v.forma_pago_id = fp.id JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY fp.nombre ORDER BY cantidad DESC LIMIT 1`,
+          `SELECT fp.nombre, COUNT(v.id) as cantidad, COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as monto 
+           FROM formas_pago fp 
+           LEFT JOIN ventas v ON v.forma_pago_id = fp.id 
+           LEFT JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id 
+           LEFT JOIN jornadas j ON jp.jornada_id = j.id 
+           WHERE j.periodo_id = $1 OR v.id IS NULL
+           GROUP BY fp.id, fp.nombre 
+           HAVING COUNT(v.id) > 0
+           ORDER BY cantidad DESC`,
           [id],
         )
-      ).rows[0];
+      ).rows;
+
+      const rankingStands = (
+        await pool.query(
+          `SELECT s.nombre, COUNT(v.id) as cantidad, COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as monto
+           FROM stands s
+           JOIN jornada_promotores jp ON s.id = ANY(jp.stands_ids)
+           JOIN jornadas j ON jp.jornada_id = j.id
+           LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+           WHERE j.periodo_id = $1
+           GROUP BY s.id, s.nombre
+           ORDER BY monto DESC`,
+          [id],
+        )
+      ).rows;
+
       const semanal = (
         await pool.query(
           `SELECT TO_CHAR(j.fecha, 'Day') as nombre_dia, SUM(v.monto) as venta, COUNT(v.id) as fichas FROM ventas v JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id JOIN jornadas j ON jp.jornada_id = j.id WHERE j.periodo_id = $1 GROUP BY 1, EXTRACT(ISODOW FROM j.fecha) ORDER BY EXTRACT(ISODOW FROM j.fecha)`,
@@ -406,7 +438,13 @@ router.get(
           mann_whitney: mannWhitney,
         },
         segmentacion,
-        tops: { plan: topPlan, pago: topPago },
+        tops: {
+          plan: rankingPlanes[0] || null,
+          pago: rankingPagos[0] || null,
+        },
+        ranking_planes: rankingPlanes,
+        ranking_pagos: rankingPagos,
+        ranking_stands: rankingStands,
         semanal,
         ventas_diarias: diario,
         promotores,
