@@ -158,6 +158,7 @@ router.get("/dashboard", auth, async (req, res) => {
                         ELSE pp.objetivo::float
                     END
                 ), 0)
+                ), 0)
                  FROM periodo_promotores pp
                  JOIN periodos p ON pp.periodo_id = p.id
                  WHERE ${objetivoWhereClause}
@@ -165,8 +166,58 @@ router.get("/dashboard", auth, async (req, res) => {
                 ) as objetivo_global
         `;
 
-    const result = await pool.query(query, globalParams);
-    res.json(result.rows[0]);
+    const rankingPlanesQuery = `
+      SELECT pl.nombre, COUNT(v.id) as cantidad, COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as monto
+      FROM ventas v
+      JOIN planes pl ON v.plan_id = pl.id
+      JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+      JOIN jornadas j ON jp.jornada_id = j.id
+      ${ventasFichasJoinPeriodos}
+      WHERE ${ventasFichasWhereClause}
+      ${zonaConditionVentasFichas}
+      GROUP BY pl.nombre
+      ORDER BY cantidad DESC
+    `;
+
+    const rankingPagosQuery = `
+      SELECT fp.nombre, COUNT(v.id) as cantidad, COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as monto
+      FROM ventas v
+      JOIN formas_pago fp ON v.forma_pago_id = fp.id
+      JOIN jornada_promotores jp ON v.jornada_promotor_id = jp.id
+      JOIN jornadas j ON jp.jornada_id = j.id
+      ${ventasFichasJoinPeriodos}
+      WHERE ${ventasFichasWhereClause}
+      ${zonaConditionVentasFichas}
+      GROUP BY fp.nombre
+      ORDER BY cantidad DESC
+    `;
+
+    const rankingStandsQuery = `
+      SELECT s.nombre, COUNT(v.id) as cantidad, COALESCE(SUM(v.monto) FILTER (WHERE v.estado IN ('CARGADO', 'PENDIENTE')), 0) as monto
+      FROM stands s
+      JOIN jornada_promotores jp ON s.id = ANY(jp.stands_ids)
+      JOIN jornadas j ON jp.jornada_id = j.id
+      ${ventasFichasJoinPeriodos}
+      LEFT JOIN ventas v ON v.jornada_promotor_id = jp.id
+      WHERE ${ventasFichasWhereClause}
+      ${zonaConditionVentasFichas}
+      GROUP BY s.id, s.nombre
+      ORDER BY monto DESC
+    `;
+
+    const [statsRes, planesRes, pagosRes, standsRes] = await Promise.all([
+      pool.query(query, globalParams),
+      pool.query(rankingPlanesQuery, globalParams),
+      pool.query(rankingPagosQuery, globalParams),
+      pool.query(rankingStandsQuery, globalParams),
+    ]);
+
+    res.json({
+      ...statsRes.rows[0],
+      ranking_planes: planesRes.rows,
+      ranking_pagos: pagosRes.rows,
+      ranking_stands: standsRes.rows,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
