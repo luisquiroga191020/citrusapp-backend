@@ -158,7 +158,6 @@ router.get("/dashboard", auth, async (req, res) => {
                         ELSE pp.objetivo::float
                     END
                 ), 0)
-                ), 0)
                  FROM periodo_promotores pp
                  JOIN periodos p ON pp.periodo_id = p.id
                  WHERE ${objetivoWhereClause}
