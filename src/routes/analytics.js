@@ -54,6 +54,7 @@ router.get("/dashboard", auth, async (req, res) => {
       zonaConditionVentasFichas = `AND j.zona_id = $${globalParams.length + 1}`;
       globalParams.push(zona_id);
     }
+    const numVentasParams = globalParams.length;
 
     // --- 2. CONFIG: Activos Hoy ---
     // Note: Activos Hoy is always based on CURRENT_DATE, but might need Zona filter
@@ -205,11 +206,13 @@ router.get("/dashboard", auth, async (req, res) => {
       ORDER BY monto DESC
     `;
 
+    const ventasFichasParams = globalParams.slice(0, numVentasParams);
+
     const [statsRes, planesRes, pagosRes, standsRes] = await Promise.all([
       pool.query(query, globalParams),
-      pool.query(rankingPlanesQuery, globalParams),
-      pool.query(rankingPagosQuery, globalParams),
-      pool.query(rankingStandsQuery, globalParams),
+      pool.query(rankingPlanesQuery, ventasFichasParams),
+      pool.query(rankingPagosQuery, ventasFichasParams),
+      pool.query(rankingStandsQuery, ventasFichasParams),
     ]);
 
     res.json({
