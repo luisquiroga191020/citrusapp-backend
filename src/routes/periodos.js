@@ -89,13 +89,14 @@ router.get(
   async (req, res) => {
     try {
       const { rol, zona_id } = req.user;
+      const userRol = rol ? rol.toLowerCase() : "";
       let query = `
             SELECT p.*, z.nombre as zona_nombre 
             FROM periodos p
             JOIN zonas z ON p.zona_id = z.id
         `;
       const params = [];
-      if (rol === "Lider") {
+      if (userRol === "lider") {
         query += ` WHERE p.zona_id = $1`;
         params.push(zona_id);
       }
@@ -532,7 +533,10 @@ router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
       estado,
       promotores,
     } = req.body;
-    if (req.user.rol === "Lider" && req.user.zona_id !== zona_id)
+    if (
+      (req.user.rol ? req.user.rol.toLowerCase() : "") === "lider" &&
+      req.user.zona_id !== zona_id
+    )
       throw new Error("Sin permisos.");
     if (estado === "Activo") await checkPeriodoActivo(zona_id);
     const periodRes = await client.query(

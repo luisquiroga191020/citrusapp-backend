@@ -11,6 +11,7 @@ router.get(
   async (req, res) => {
     try {
       const { rol, zona_id } = req.user;
+      const userRol = rol ? rol.toLowerCase() : "";
       let query = `
             SELECT 
                 j.id, j.fecha, j.created_at, 
@@ -27,7 +28,7 @@ router.get(
             JOIN usuarios u ON j.created_by = u.id
         `;
       const params = [];
-      if (rol === "Lider") {
+      if (userRol === "lider") {
         query += " WHERE j.zona_id = $1";
         params.push(zona_id);
       }
@@ -122,7 +123,10 @@ router.post(
       const { fecha, periodo_id, zona_id, asignaciones } = req.body;
       // asignaciones ahora trae: { promotor_id, stands_ids: [] }
 
-      if (req.user.rol === "Lider" && req.user.zona_id !== zona_id)
+      if (
+        (req.user.rol ? req.user.rol.toLowerCase() : "") === "lider" &&
+        req.user.zona_id !== zona_id
+      )
         throw new Error("Sin permisos.");
 
       const check = await client.query(
@@ -251,6 +255,7 @@ router.post(
   auth,
   verifyRole(["Administrador", "Lider"]),
   async (req, res) => {
+    const userRol = req.user.rol ? req.user.rol.toLowerCase() : "";
     const {
       jornada_promotor_id,
       plan_id,
@@ -286,8 +291,9 @@ router.put(
   async (req, res) => {
     const { plan_id, forma_pago_id, monto, codigo_ficha, tipo, estado } =
       req.body;
+    const userRol = req.user.rol ? req.user.rol.toLowerCase() : "";
     try {
-      if (req.user.rol === "Administrador") {
+      if (userRol === "administrador") {
         await pool.query(
           `UPDATE ventas SET plan_id=$1, forma_pago_id=$2, monto=$3, codigo_ficha=$4, tipo=$5, estado=$6 WHERE id=$7`,
           [

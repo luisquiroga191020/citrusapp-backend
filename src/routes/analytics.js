@@ -28,6 +28,7 @@ const buildDateFilter = (startDate, endDate) => {
 router.get("/dashboard", auth, async (req, res) => {
   try {
     const { zona_id, rol } = req.user;
+    const userRol = rol ? rol.toLowerCase() : "";
     const { startDate, endDate } = req.query;
 
     const isFiltered = startDate && endDate;
@@ -49,7 +50,7 @@ router.get("/dashboard", auth, async (req, res) => {
     }
 
     let zonaConditionVentasFichas = "";
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       zonaConditionVentasFichas = `AND j.zona_id = $${globalParams.length + 1}`;
       globalParams.push(zona_id);
     }
@@ -57,7 +58,7 @@ router.get("/dashboard", auth, async (req, res) => {
     // --- 2. CONFIG: Activos Hoy ---
     // Note: Activos Hoy is always based on CURRENT_DATE, but might need Zona filter
     let activosHoyZonaCondition = "";
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       activosHoyZonaCondition = `AND j.zona_id = $${globalParams.length + 1}`;
       globalParams.push(zona_id);
     }
@@ -77,7 +78,7 @@ router.get("/dashboard", auth, async (req, res) => {
     }
 
     let zonaConditionObjetivo = "";
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       zonaConditionObjetivo = `AND p.zona_id = $${globalParams.length + 1}`;
       globalParams.push(zona_id);
     }
@@ -226,6 +227,7 @@ router.get("/dashboard", auth, async (req, res) => {
 router.get("/ranking", auth, async (req, res) => {
   try {
     const { rol, zona_id } = req.user;
+    const userRol = rol ? rol.toLowerCase() : "";
     const { startDate, endDate } = req.query;
 
     const filter = buildDateFilter(startDate, endDate);
@@ -265,7 +267,7 @@ router.get("/ranking", auth, async (req, res) => {
             JOIN zonas z ON p.zona_id = z.id
             LEFT JOIN tipo_novedad tn ON jp.tipo_novedad_id = tn.id
             WHERE j.fecha BETWEEN $1 AND $2
-            ${rol === "Lider" ? `AND p.zona_id = $3` : ""}
+            ${userRol === "lider" ? `AND p.zona_id = $3` : ""}
             GROUP BY pr.id, pr.nombre_completo, pr.foto_url
             ORDER BY venta_real DESC
          `;
@@ -274,7 +276,7 @@ router.get("/ranking", auth, async (req, res) => {
     } else {
       // Default: Active Period
       let whereClause = `p.estado = 'Activo'`;
-      if (rol === "Lider") {
+      if (userRol === "lider") {
         whereClause += ` AND p.zona_id = $1`;
         params.push(zona_id);
       }
@@ -370,6 +372,7 @@ router.get("/ranking", auth, async (req, res) => {
 router.get("/semanal", auth, async (req, res) => {
   try {
     const { rol, zona_id } = req.user;
+    const userRol = rol ? rol.toLowerCase() : "";
     const { startDate, endDate } = req.query;
 
     let whereClause;
@@ -382,7 +385,7 @@ router.get("/semanal", auth, async (req, res) => {
       whereClause = `j.fecha >= CURRENT_DATE - INTERVAL '7 days'`;
     }
 
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       whereClause += ` AND j.zona_id = $${params.length + 1}`;
       params.push(zona_id);
     }
@@ -408,6 +411,7 @@ router.get("/semanal", auth, async (req, res) => {
 router.get("/planes", auth, async (req, res) => {
   try {
     const { rol, zona_id } = req.user;
+    const userRol = rol ? rol.toLowerCase() : "";
     const { startDate, endDate } = req.query;
 
     let whereClause;
@@ -423,7 +427,7 @@ router.get("/planes", auth, async (req, res) => {
       joinPeriodos = `JOIN periodos p ON j.periodo_id = p.id`;
     }
 
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       whereClause += ` AND j.zona_id = $${params.length + 1}`;
       params.push(zona_id);
     }
@@ -503,13 +507,14 @@ function calculateMannWhitney(groupA, groupB) {
 router.get("/eficiencia", auth, async (req, res) => {
   try {
     const { rol, zona_id } = req.user;
+    const userRol = rol ? rol.toLowerCase() : "";
     const { startDate, endDate } = req.query;
 
     const filter = buildDateFilter(startDate, endDate);
     let whereClause = filter.sql;
     let params = [...filter.params];
 
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       whereClause += ` AND j.zona_id = $${params.length + 1}`;
       params.push(zona_id);
     }
@@ -596,6 +601,7 @@ router.get("/eficiencia", auth, async (req, res) => {
 router.get("/mapa-stands", auth, async (req, res) => {
   try {
     const { rol, zona_id } = req.user;
+    const userRol = rol ? rol.toLowerCase() : "";
     const { periodo_id, stand_id, plan_id, forma_pago_id, promotor_id } =
       req.query;
 
@@ -614,7 +620,7 @@ router.get("/mapa-stands", auth, async (req, res) => {
     }
 
     // 2. Filtro de Zona (Permisos)
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       whereConditions.push(`s.zona_id = $${params.length + 1}`);
       params.push(zona_id);
     }
@@ -680,7 +686,7 @@ router.get("/mapa-stands", auth, async (req, res) => {
     // Obtener lista de periodos para el selector (filtrado por zona si es Líder)
     let periodosQuery = `SELECT id, nombre, estado FROM periodos`;
     let periodosParams = [];
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       periodosQuery += ` WHERE zona_id = $1`;
       periodosParams.push(zona_id);
     }
@@ -690,7 +696,7 @@ router.get("/mapa-stands", auth, async (req, res) => {
     // Obtener listas para filtros
     let standsQuery = `SELECT id, nombre FROM stands WHERE ubicacion_lat IS NOT NULL AND ubicacion_lng IS NOT NULL`;
     let standsParams = [];
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       standsQuery += ` AND zona_id = $1`;
       standsParams.push(zona_id);
     }
@@ -706,7 +712,7 @@ router.get("/mapa-stands", auth, async (req, res) => {
 
     let promotoresQuery = `SELECT DISTINCT pr.id, pr.nombre_completo FROM promotores pr`;
     let promotoresParams = [];
-    if (rol === "Lider") {
+    if (userRol === "lider") {
       promotoresQuery += ` WHERE pr.zona_id = $1`;
       promotoresParams.push(zona_id);
     }

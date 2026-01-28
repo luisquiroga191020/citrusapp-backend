@@ -2,10 +2,12 @@ const verifyRole = (rolesPermitidos) => {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: "No autenticado" });
 
-    // Admin siempre pasa
-    if (req.user.rol === "Administrador") return next();
+    const userRol = req.user.rol ? req.user.rol.toLowerCase() : "";
 
-    if (rolesPermitidos.includes(req.user.rol)) {
+    // Admin siempre pasa
+    if (userRol === "administrador") return next();
+
+    if (rolesPermitidos.some((role) => role.toLowerCase() === userRol)) {
       return next();
     }
 
