@@ -208,5 +208,7 @@ const tipoNovedadRoutes = require("./routes/tipo_novedad");
 app.use("/api/tipo-novedad", tipoNovedadRoutes);
 const auditsRoutes = require("./routes/audits");
 app.use("/api/audits", auditsRoutes);
+const palletsRoutes = require("./routes/pallets");
+app.use("/api/pallets", palletsRoutes);
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
