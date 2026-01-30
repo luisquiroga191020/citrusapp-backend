@@ -22,9 +22,13 @@ router.get(
 router.post("/", auth, verifyRole(["Administrador"]), async (req, res) => {
   const { mercado, codigo_mercado } = req.body;
   try {
+    const finalCodigo =
+      codigo_mercado === "" || codigo_mercado === undefined
+        ? null
+        : codigo_mercado;
     const result = await pool.query(
       "INSERT INTO mercados (mercado, codigo_mercado) VALUES ($1, $2) RETURNING *",
-      [mercado, codigo_mercado],
+      [mercado, finalCodigo],
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -36,9 +40,13 @@ router.put("/:id", auth, verifyRole(["Administrador"]), async (req, res) => {
   const { id } = req.params;
   const { mercado, codigo_mercado } = req.body;
   try {
+    const finalCodigo =
+      codigo_mercado === "" || codigo_mercado === undefined
+        ? null
+        : codigo_mercado;
     await pool.query(
       "UPDATE mercados SET mercado = $1, codigo_mercado = $2 WHERE id = $3 AND deleted_at IS NULL",
-      [mercado, codigo_mercado, id],
+      [mercado, finalCodigo, id],
     );
     res.json({ message: "Mercado actualizado" });
   } catch (err) {
