@@ -18,6 +18,14 @@ const standsRoutes = require("./routes/stands");
 const analyticsRoutes = require("./routes/analytics");
 const iaRoutes = require("./routes/ia");
 const planificadorRoutes = require("./routes/planificador");
+const productosRoutes = require("./routes/productos");
+const marcasRoutes = require("./routes/marcas");
+const categoriasRoutes = require("./routes/categorias");
+const calibresRoutes = require("./routes/calibres");
+const envasesRoutes = require("./routes/envases");
+const mercadosRoutes = require("./routes/mercados");
+const kilosRoutes = require("./routes/kilos");
+const unidadesProduccionRoutes = require("./routes/unidades_produccion");
 
 const app = express();
 app.use(express.json());
@@ -38,7 +46,7 @@ app.post("/auth/register", async (req, res) => {
   try {
     const newUser = await pool.query(
       "INSERT INTO usuarios (email, password_hash, nombre_completo, rol) VALUES ($1, $2, $3, 'admin') RETURNING id, email",
-      [email, hash, nombre]
+      [email, hash, nombre],
     );
     res.json(newUser.rows[0]);
   } catch (err) {
@@ -69,7 +77,7 @@ app.post("/auth/login", async (req, res) => {
       zona_id: usuarioData.zona_id, // <--- IMPORTANTE: Incluirlo en el token
     },
     process.env.JWT_SECRET,
-    { expiresIn: "12h" }
+    { expiresIn: "12h" },
   );
 
   // Registrar login exitoso en auditoría (usuario ya identificado)
@@ -88,7 +96,7 @@ app.post("/auth/login", async (req, res) => {
         req.get("User-Agent") || null,
         null,
         { message: "login_success" },
-      ]
+      ],
     );
   } catch (e) {
     console.error("Audit insert error on login", e.message);
@@ -121,7 +129,7 @@ app.post("/auth/logout", auth, async (req, res) => {
         req.get("User-Agent") || null,
         null,
         { message: "logout" },
-      ]
+      ],
     );
   } catch (e) {
     console.error("Audit insert error on logout", e.message);
@@ -134,7 +142,7 @@ app.get("/auth/me", auth, async (req, res) => {
   try {
     const user = await pool.query(
       "SELECT id, email, nombre_completo, rol, activo, zona_id FROM usuarios WHERE id = $1",
-      [req.user.id]
+      [req.user.id],
     );
 
     if (user.rows.length === 0) {
@@ -188,6 +196,14 @@ app.use("/api/stands", standsRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/ia", iaRoutes);
 app.use("/api/planificador", planificadorRoutes);
+app.use("/api/productos", productosRoutes);
+app.use("/api/marcas", marcasRoutes);
+app.use("/api/categorias", categoriasRoutes);
+app.use("/api/calibres", calibresRoutes);
+app.use("/api/envases", envasesRoutes);
+app.use("/api/mercados", mercadosRoutes);
+app.use("/api/kilos", kilosRoutes);
+app.use("/api/unidades-produccion", unidadesProduccionRoutes);
 const tipoNovedadRoutes = require("./routes/tipo_novedad");
 app.use("/api/tipo-novedad", tipoNovedadRoutes);
 const auditsRoutes = require("./routes/audits");
