@@ -53,7 +53,8 @@ router.get(
             c.categoria as categoria_nombre,
             ca.calibre as calibre_nombre,
             mer.mercado as mercado_nombre,
-            k.kilo as kilos_nombre
+            k.kilo as kilos_nombre,
+            u.nombre as usuario_nombre
         FROM alta_pallets p
         LEFT JOIN productos pr ON p.producto_id = pr.id
         LEFT JOIN marcas m ON p.marca_id = m.id
@@ -61,6 +62,7 @@ router.get(
         LEFT JOIN calibres ca ON p.calibre_id = ca.id
         LEFT JOIN mercados mer ON p.mercado_id = mer.id
         LEFT JOIN kilos k ON p.kilos_id = k.id
+        LEFT JOIN usuarios u ON p.usuario_id = u.id
         WHERE p.id = $1 AND p.deleted_at IS NULL
       `,
         [req.params.id],
