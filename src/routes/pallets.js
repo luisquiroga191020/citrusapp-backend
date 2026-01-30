@@ -73,7 +73,7 @@ router.get(
         `
         SELECT 
             d.*, 
-            up.numero_certificado as up_nombre
+            up.up as up_nombre
         FROM pallet_detalle_cajas d
         LEFT JOIN unidades_produccion up ON d.up_id = up.id
         WHERE d.pallet_id = $1 AND d.deleted_at IS NULL
