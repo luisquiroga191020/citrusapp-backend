@@ -115,8 +115,9 @@ router.post(
       const result = await pool.query(
         `INSERT INTO alta_pallets (
             numero_pallet, fecha, producto_id, codigo_senasa, 
-            marca_id, categoria_id, calibre_id, mercado_id, kilos_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+            marca_id, categoria_id, calibre_id, mercado_id, kilos_id,
+            usuario_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
         [
           numero_pallet,
           fecha,
@@ -127,6 +128,7 @@ router.post(
           calibre_id,
           mercado_id,
           kilos_id,
+          req.user.id,
         ],
       );
       res.json({ id: result.rows[0].id });
