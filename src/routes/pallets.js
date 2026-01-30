@@ -54,7 +54,7 @@ router.get(
             ca.calibre as calibre_nombre,
             mer.mercado as mercado_nombre,
             k.kilo as kilos_nombre,
-            u.nombre as usuario_nombre
+            u.nombre_completo as usuario_nombre
         FROM alta_pallets p
         LEFT JOIN productos pr ON p.producto_id = pr.id
         LEFT JOIN marcas m ON p.marca_id = m.id
