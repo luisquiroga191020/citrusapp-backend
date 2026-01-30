@@ -18,7 +18,7 @@ router.get(
             c.categoria as categoria_nombre,
             ca.calibre as calibre_nombre,
             mer.mercado as mercado_nombre,
-            k.kilos as kilos_nombre,
+            k.kilo as kilos_nombre,
             (SELECT COALESCE(SUM(cantidad_cajas), 0) FROM pallet_detalle_cajas WHERE pallet_id = p.id AND deleted_at IS NULL) as total_cajas
         FROM alta_pallets p
         LEFT JOIN productos pr ON p.producto_id = pr.id
@@ -53,7 +53,7 @@ router.get(
             c.categoria as categoria_nombre,
             ca.calibre as calibre_nombre,
             mer.mercado as mercado_nombre,
-            k.kilos as kilos_nombre
+            k.kilo as kilos_nombre
         FROM alta_pallets p
         LEFT JOIN productos pr ON p.producto_id = pr.id
         LEFT JOIN marcas m ON p.marca_id = m.id
